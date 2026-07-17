@@ -40,7 +40,7 @@ _CACHE_LOCK = threading.RLock()
 _BASE_TTL = 24 * 3600
 _THREAD_LOCAL = threading.local()
 _RPS_CACHE_DIR = Path(__file__).with_name(".cache")
-_RPS_VERSION = 3
+_RPS_VERSION = 6
 _RPS_PERIODS = (20, 50, 120, 250)
 _RPS_HISTORY_DAYS = 20
 _STRATEGIES = {
@@ -589,6 +589,64 @@ def _latest_tdx_date() -> str:
     return str(frame.iloc[-1].get("datetime") or "")[:10]
 
 
+def _exact_qfq_closes(
+    trade_dates: list[str],
+    raw_closes: list[float],
+    actions: list[dict],
+) -> list[float]:
+    """按通达信除权除息记录计算精确前复权收盘价。
+
+    通达信 category=1 的字段均以每 10 股为单位。除权日之前的价格依次按
+    ``(价格*10-分红+配股数*配股价)/(10+配股数+送转数)`` 调整。
+    """
+    adjusted = list(raw_closes)
+    if not adjusted or not actions:
+        return adjusted
+    normalized_dates = [str(value or "")[:10] for value in trade_dates]
+    last_trade_date = normalized_dates[-1]
+    valid_actions: list[tuple[str, float, float, float, float]] = []
+    for row in actions:
+        if int(_finite(row.get("category")) or 0) != 1:
+            continue
+        try:
+            action_date = (
+                f"{int(row.get('year')):04d}-{int(row.get('month')):02d}-"
+                f"{int(row.get('day')):02d}"
+            )
+        except (TypeError, ValueError):
+            continue
+        if action_date > last_trade_date:
+            continue
+        fenhong = float(_finite(row.get("fenhong")) or 0)
+        peigu = float(_finite(row.get("peigu")) or 0)
+        peigujia = float(_finite(row.get("peigujia")) or 0)
+        songzhuangu = float(_finite(row.get("songzhuangu")) or 0)
+        denominator = 10 + peigu + songzhuangu
+        if denominator > 0:
+            valid_actions.append((action_date, fenhong, peigu, peigujia, denominator))
+
+    # 必须按除权日从早到晚应用；现金分红使复权变换并非简单的乘法。
+    for action_date, fenhong, peigu, peigujia, denominator in sorted(valid_actions):
+        for index, trade_date in enumerate(normalized_dates):
+            if trade_date >= action_date:
+                break
+            adjusted[index] = (
+                adjusted[index] * 10 - fenhong + peigu * peigujia
+            ) / denominator
+    return adjusted
+
+
+def _xdxr_actions(code: str) -> list[dict]:
+    try:
+        frame = _thread_client().xdxr(symbol=code)
+    except Exception:  # noqa: BLE001 — 连接失效时重建一次
+        _reset_thread_client()
+        frame = _thread_client().xdxr(symbol=code)
+    if frame is None or frame.empty:
+        return []
+    return frame.to_dict("records")
+
+
 def _rps_history(stock: dict) -> dict | None:
     code = stock["code"]
     try:
@@ -599,14 +657,22 @@ def _rps_history(stock: dict) -> dict | None:
         )
         if frame is None or frame.empty or len(frame) < 251:
             return None
-        closes = [_finite(value) for value in frame["close"].tolist()]
-        if any(value is None or value <= 0 for value in closes):
+        raw_closes = [_finite(value) for value in frame["close"].tolist()]
+        if any(value is None or value <= 0 for value in raw_closes):
+            return None
+        trade_dates = [str(value or "")[:10] for value in frame["datetime"].tolist()]
+        closes = _exact_qfq_closes(
+            trade_dates,
+            [float(value) for value in raw_closes],
+            _xdxr_actions(code),
+        )
+        if any(value <= 0 for value in closes):
             return None
         start = max(250, len(closes) - _RPS_HISTORY_DAYS)
         points = []
         for index in range(start, len(closes)):
             points.append({
-                "trade_date": str(frame.iloc[index].get("datetime") or "")[:10],
+                "trade_date": trade_dates[index],
                 "returns": {
                     period: closes[index] / closes[index - period] - 1
                     for period in _RPS_PERIODS
@@ -637,8 +703,13 @@ def _percentile_ranks(items: list[dict], period: int) -> dict[str, float]:
             ordered[end + 1]["returns"][period], value, rel_tol=0, abs_tol=1e-12,
         ):
             end += 1
-        average_rank = ((index + 1) + (end + 1)) / 2
-        percentile = round(average_rank / count * 100, 2)
+        # 通达信“0—1000归一化顺序”：最小值为 0，最大值为 1000。
+        # 项目内部保留 0—100 展示值；EXTDATA_USER 引用时再乘 10。
+        average_zero_based_rank = (index + end) / 2
+        percentile = round(
+            average_zero_based_rank / (count - 1) * 100 if count > 1 else 100,
+            2,
+        )
         for cursor in range(index, end + 1):
             ranks[ordered[cursor]["code"]] = percentile
         index = end + 1
@@ -646,10 +717,10 @@ def _percentile_ranks(items: list[dict], period: int) -> dict[str, float]:
 
 
 def rps_snapshot() -> dict:
-    """构建/读取当日 RPS50/120/250 全市场快照。
+    """构建/读取当日 RPS20/50/120/250 全市场快照。
 
-    只有至少 251 根有效日 K 的沪深 A 股进入三个 RPS 的共同样本，等价于先
-    剔除上市约一年内的新股，再按 50/120/250 日涨幅计算横截面百分位。
+    先统一选取至少 251 根日 K 的沪深 A 股作为上市一年以上共同样本，再让所有
+    RPS 周期都在同一批股票内计算精确复权涨幅和 0—1000 归一化顺序排名。
     """
     trade_date = _latest_tdx_date()
     memory_key = ("rps-snapshot", trade_date, _RPS_VERSION)
@@ -677,7 +748,10 @@ def rps_snapshot() -> dict:
     if len(histories) < 1000:
         raise QuantDataError(f"RPS 有效样本过少（{len(histories)}），通达信数据可能不完整")
 
-    rank_maps = {period: _percentile_ranks(histories, period) for period in _RPS_PERIODS}
+    rank_maps = {
+        period: _percentile_ranks(histories, period)
+        for period in _RPS_PERIODS
+    }
     by_date: dict[str, list[dict]] = {}
     for item in histories:
         for point in item.get("points", []):
@@ -722,8 +796,14 @@ def rps_snapshot() -> dict:
         "universe_count": len(universe),
         "eligible_count": len(histories),
         "excluded_short_history_count": len(universe) - len(histories),
+        "ranked_count_by_period": {
+            str(period): len(histories) for period in _RPS_PERIODS
+        },
         "rule": (
-            "沪深A股统一剔除不足251根日K的上市一年内新股，再计算RPS20/50/120/250；"
+            "沪深A股统一选取至少251根日K的上市一年以上共同样本，先在该全市场样本内"
+            "使用通达信除权除息记录精确前复权，按(C-REF(C,N))/REF(C,N)计算"
+            "N=20/50/120/250收益率并做0—1000归一化顺序排名，再将RPS结果与基金/北向"
+            "基础池合并参与选股（项目展示为0—100，EXTDATA_USER为0—1000）；"
             f"同时保留最近{_RPS_HISTORY_DAYS}个交易日RPS供通达信历史函数使用"
         ),
         "stocks": stocks,

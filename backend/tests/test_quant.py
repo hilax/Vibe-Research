@@ -54,7 +54,30 @@ def test_rps_percentiles_share_one_ranked_universe():
         {"code": "4", "returns": {50: 0.4}},
     ]
     ranks = quant._percentile_ranks(rows, 50)
-    assert ranks == {"1": 25.0, "2": 62.5, "3": 62.5, "4": 100.0}
+    assert ranks == {"1": 0.0, "2": 50.0, "3": 50.0, "4": 100.0}
+
+
+def test_rps_exact_qfq_uses_tdx_dividend_rights_and_bonus_records():
+    closes = quant._exact_qfq_closes(
+        ["2026-01-02", "2026-01-05", "2026-01-06"],
+        [100.0, 110.0, 120.0],
+        [
+            {
+                "year": 2026,
+                "month": 1,
+                "day": 5,
+                "category": 1,
+                "fenhong": 10,
+                "peigu": 2,
+                "peigujia": 20,
+                "songzhuangu": 1,
+            },
+            {"year": 2026, "month": 1, "day": 7, "category": 1, "fenhong": 50},
+            {"year": 2026, "month": 1, "day": 5, "category": 5, "fenhong": 999},
+        ],
+    )
+
+    assert closes == [1030 / 13, 110.0, 120.0]
 
 
 def test_hkex_codes_and_base_pool_use_or_logic(monkeypatch):
