@@ -35,3 +35,7 @@ frontend/tsconfig.tsbuildinfo
 *.log
 .vscode/
 .idea/
+
+# ── AI 工具私有配置（个人/本地，不上传到 GitHub） ──────────────
+.codex-restart-verify.ps1
+CLAUDE.md
