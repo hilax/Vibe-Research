@@ -2,7 +2,7 @@
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly details?: unknown) {
     super(message);
   }
 }
@@ -75,7 +75,11 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
     if (resp.status === 401) {
       throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
     }
-    throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
+    const detail = payload?.detail;
+    if (detail && typeof detail === "object") {
+      throw new ApiError(detail.message || `HTTP ${resp.status}`, resp.status, detail.issues || detail);
+    }
+    throw new ApiError(detail || `HTTP ${resp.status}`, resp.status);
   }
   return (payload?.data ?? payload) as T;
 }
@@ -212,13 +216,35 @@ export interface QaRow { company: string; question: string; answer: string | nul
 export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
+export type QuantStrategy = "near_high" | "monthly_reversal_62" | "growth_mrgc_sxhcg";
+export interface TdxFormulaPreset {
+  strategy: QuantStrategy; label: string; description: string; syntax_version: string;
+  default_source: string; default_history_days: number; supported_functions: string[];
+}
+export interface TdxFormulaIssue {
+  code?: string; message: string; line?: number | null; column?: number | null;
+  severity?: "error" | "warning";
+}
+export interface TdxFormulaValidation {
+  strategy: QuantStrategy;
+  normalized_source: string;
+  formula_hash: string;
+  required_history: number;
+  minimum_history?: number;
+  used_functions: string[];
+  uses_rps: boolean;
+  uses_finance: boolean;
+  output_name?: string | null;
+  issues?: TdxFormulaIssue[];
+}
 export interface QuantScreenInput {
-  strategy: "near_high" | "monthly_reversal_62" | "growth_mrgc_sxhcg";
+  strategy: QuantStrategy;
   fund_ratio_min: number;
   north_value_min_yi: number;
-  near_high_pct: number;
-  lookback_days: number;
+  near_high_pct?: number;
+  lookback_days?: number;
   fund_period?: string | null;
+  formula_source?: string;
 }
 export interface QuantRow {
   code: string; name: string; industry: string;
@@ -234,6 +260,7 @@ export interface QuantRow {
   return50_pct?: number; return120_pct?: number; return250_pct?: number;
   turnover_pct?: number | null; drawdown120_pct?: number;
   strategy_detail?: string; matched?: boolean;
+  signal_results?: Record<string, boolean>;
   mrgc?: boolean; sxhcg?: boolean;
   financial_period?: string | null;
   revenue_yoy_pct?: number | null; net_profit_yoy_pct?: number | null;
@@ -243,7 +270,8 @@ export interface QuantScreenResult {
   strategy_label: string;
   criteria: {
     fund_ratio_min: number; north_value_min_yi: number;
-    near_high_pct: number; lookback_days: number; tdx_formula: string;
+    near_high_pct?: number; lookback_days?: number; tdx_formula: string;
+    formula_source?: string; formula_hash?: string; required_history?: number; minimum_history?: number;
   };
   fund_period: string; north_period: string; technical_date: string | null;
   fund_candidate_count: number; north_candidate_count: number; overlap_count: number;
@@ -315,6 +343,9 @@ export const api = {
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   quantScreen: (input: QuantScreenInput) =>
     request<QuantScreenResult>("/quant/screen", "POST", input),
+  quantFormulas: () => get<TdxFormulaPreset[]>("/quant/formulas"),
+  validateQuantFormula: (strategy: QuantStrategy, source: string) =>
+    request<TdxFormulaValidation>("/quant/formula/validate", "POST", { strategy, source }),
   myReports: () => get<MyReport[]>("/myreports"),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),

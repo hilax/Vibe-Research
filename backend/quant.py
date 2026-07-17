@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import json
 import os
 import re
@@ -22,6 +23,9 @@ from pathlib import Path
 from typing import Any
 
 import astock
+import quant_formula
+import tdx_formula
+import tdx_presets
 
 _FUND_URL = "https://data.eastmoney.com/dataapi/zlsj/list"
 _HKEX_URL = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
@@ -34,8 +38,9 @@ _CACHE_LOCK = threading.RLock()
 _BASE_TTL = 6 * 3600
 _THREAD_LOCAL = threading.local()
 _RPS_CACHE_DIR = Path(__file__).with_name(".cache")
-_RPS_VERSION = 1
+_RPS_VERSION = 2
 _RPS_PERIODS = (50, 120, 250)
+_RPS_HISTORY_DAYS = 20
 _STRATEGIES = {
     "near_high": "接近一年新高",
     "monthly_reversal_62": "月线反转 6.2",
@@ -454,22 +459,33 @@ def _latest_tdx_date() -> str:
 def _rps_history(stock: dict) -> dict | None:
     code = stock["code"]
     try:
-        frame = _thread_client().bars(symbol=code, frequency=4, offset=251)
+        frame = _thread_client().bars(
+            symbol=code,
+            frequency=4,
+            offset=250 + _RPS_HISTORY_DAYS,
+        )
         if frame is None or frame.empty or len(frame) < 251:
             return None
         closes = [_finite(value) for value in frame["close"].tolist()]
         if any(value is None or value <= 0 for value in closes):
             return None
-        current = closes[-1]
-        returns = {
-            period: current / closes[-period - 1] - 1
-            for period in _RPS_PERIODS
-        }
+        start = max(250, len(closes) - _RPS_HISTORY_DAYS)
+        points = []
+        for index in range(start, len(closes)):
+            points.append({
+                "trade_date": str(frame.iloc[index].get("datetime") or "")[:10],
+                "returns": {
+                    period: closes[index] / closes[index - period] - 1
+                    for period in _RPS_PERIODS
+                },
+            })
+        returns = points[-1]["returns"]
         return {
             "code": code,
             "name": stock["name"],
             "trade_date": str(frame.iloc[-1].get("datetime") or "")[:10],
             "returns": returns,
+            "points": points,
         }
     except Exception:  # noqa: BLE001 — 单只失败不影响全市场快照
         _reset_thread_client()
@@ -529,6 +545,28 @@ def rps_snapshot() -> dict:
         raise QuantDataError(f"RPS 有效样本过少（{len(histories)}），通达信数据可能不完整")
 
     rank_maps = {period: _percentile_ranks(histories, period) for period in _RPS_PERIODS}
+    by_date: dict[str, list[dict]] = {}
+    for item in histories:
+        for point in item.get("points", []):
+            by_date.setdefault(point["trade_date"], []).append({
+                "code": item["code"],
+                "returns": point["returns"],
+            })
+    historical_ranks: dict[str, list[dict]] = {}
+    for point_date in sorted(by_date):
+        date_items = by_date[point_date]
+        date_rank_maps = {
+            period: _percentile_ranks(date_items, period)
+            for period in _RPS_PERIODS
+        }
+        for item in date_items:
+            code = item["code"]
+            historical_ranks.setdefault(code, []).append({
+                "trade_date": point_date,
+                "rps50": date_rank_maps[50][code],
+                "rps120": date_rank_maps[120][code],
+                "rps250": date_rank_maps[250][code],
+            })
     stocks = {}
     for item in histories:
         code = item["code"]
@@ -540,6 +578,7 @@ def rps_snapshot() -> dict:
             "return50_pct": round(item["returns"][50] * 100, 3),
             "return120_pct": round(item["returns"][120] * 100, 3),
             "return250_pct": round(item["returns"][250] * 100, 3),
+            "history": historical_ranks.get(code, []),
         }
     snapshot = {
         "version": _RPS_VERSION,
@@ -547,7 +586,10 @@ def rps_snapshot() -> dict:
         "universe_count": len(universe),
         "eligible_count": len(histories),
         "excluded_short_history_count": len(universe) - len(histories),
-        "rule": "沪深A股统一剔除不足251根日K的上市一年内新股，再计算RPS50/120/250",
+        "rule": (
+            "沪深A股统一剔除不足251根日K的上市一年内新股，再计算RPS50/120/250；"
+            f"同时保留最近{_RPS_HISTORY_DAYS}个交易日RPS供通达信历史函数使用"
+        ),
         "stocks": stocks,
     }
     try:
@@ -629,19 +671,31 @@ def _technical_series(bars: list[dict], minimum: int = 250) -> dict | None:
     }
 
 
-def monthly_reversal_62(bars: list[dict], rps: dict) -> dict | None:
-    data = _technical_series(bars, 250)
+def monthly_reversal_62(
+    bars: list[dict], rps: dict, formula_config: dict | None = None,
+) -> dict | None:
+    config = formula_config or quant_formula.normalize_formula("monthly_reversal_62")
+    p = config["params"]
+    minimum = max(
+        250, p["close_breakout_days"], p["recent_high_days"],
+        p["secondary_breakout_days"], p["ma_very_long_days"],
+        p["platform_low_days"], p["near_high_long_days"],
+    ) + p["trend_lookback_days"]
+    data = _technical_series(bars, minimum)
     if not data:
         return None
     c, h, l = data["close"], data["high"], data["low"]
-    ma20, ma120, ma200, ma250 = data["ma20"], data["ma120"], data["ma200"], data["ma250"]
+    ma20 = _ma(c, p["ma_short_days"])
+    ma120 = _ma(c, p["ma_mid_days"])
+    ma200 = _ma(c, p["ma_long_days"])
+    ma250 = _ma(c, p["ma_very_long_days"])
     i = len(c) - 1
     rps50, rps120 = rps["rps50"], rps["rps120"]
 
-    fyx11 = rps50 > 87
-    fyx12 = rps120 > 90
-    fyx130 = rps50 >= 90 or rps120 >= 90
-    fyx131 = c[i] >= _hhv(c, 70)
+    fyx11 = rps50 > p["rps50_min"]
+    fyx12 = rps120 > p["rps120_min"]
+    fyx130 = rps50 >= p["breakout_rps_min"] or rps120 >= p["breakout_rps_min"]
+    fyx131 = c[i] >= _hhv(c, p["close_breakout_days"])
     fyx13 = fyx130 and fyx131
     fyx1 = fyx11 or fyx12
 
@@ -650,15 +704,18 @@ def monthly_reversal_62(bars: list[dict], rps: dict) -> dict | None:
     fyx23 = _llv(l, 20) > _llv(l, 50) and _llv(l, 10) > _llv(l, 20)
     fyx2 = fyx21 or fyx22 or fyx23
 
-    nh80 = [h[j] >= _hhv(h, 80, j) for j in range(len(h))]
-    fyx31 = _count_last(nh80, 10) > 0
-    fyx32 = (c[i] >= _hhv(c, 50) or h[i] >= _hhv(h, 50)) and fyx130
+    nh80 = [h[j] >= _hhv(h, p["recent_high_days"], j) for j in range(len(h))]
+    fyx31 = _count_last(nh80, p["recent_high_window"]) > 0
+    fyx32 = (
+        c[i] >= _hhv(c, p["secondary_breakout_days"])
+        or h[i] >= _hhv(h, p["secondary_breakout_days"])
+    ) and fyx130
     fyx3 = fyx31 or fyx32
 
     fyx4 = (
         c[i] > ma20[i]
         and c[i] > ma200[i]
-        and ma120[i] / ma200[i] > 0.9
+        and ma120[i] / ma200[i] > p["ma_ratio_min"]
     )
     above200 = [
         value is not None and c[index] > value
@@ -668,28 +725,45 @@ def monthly_reversal_62(bars: list[dict], rps: dict) -> dict | None:
         value is not None and l[index] < value
         for index, value in enumerate(ma200)
     ]
-    aa200 = _count_last(above200, 45)
-    laa200 = _count_last(low_below200, 45)
-    fyx51 = 2 < aa200 < 45
-    fyx52 = laa200 > 0 and aa200 > 2
+    aa200 = _count_last(above200, p["ma_above_window"])
+    laa200 = _count_last(low_below200, p["ma_above_window"])
+    fyx51 = p["ma_above_min_days"] < aa200 < p["ma_above_window"]
+    fyx52 = laa200 > 0 and aa200 > p["ma_above_min_days"]
     fyx5 = fyx51 or fyx52
 
-    fyx601 = ma120[i] >= ma120[i - 15] or ma200[i] >= ma200[i - 15]
-    fyx602 = ma120[i] >= ma120[i - 15] and ma200[i] >= ma200[i - 15]
+    trend_ref = p["trend_lookback_days"]
+    fyx601 = ma120[i] >= ma120[i - trend_ref] or ma200[i] >= ma200[i - trend_ref]
+    fyx602 = ma120[i] >= ma120[i - trend_ref] and ma200[i] >= ma200[i - trend_ref]
     fyx603 = ma120[i] > ma200[i] and ma200[i] > ma250[i]
-    ratio = _hhv(h, 30) / _llv(l, 120)
-    fyx61 = ratio < 1.50 and fyx601
-    fyx62 = ratio < 1.60 and fyx602
-    fyx63 = ratio < 1.75 and fyx603 and fyx13
+    ratio = _hhv(h, p["platform_high_days"]) / _llv(l, p["platform_low_days"])
+    fyx61 = ratio < p["platform_ratio_1"] and fyx601
+    fyx62 = ratio < p["platform_ratio_2"] and fyx602
+    fyx63 = ratio < p["platform_ratio_3"] and fyx603 and fyx13
     fyx6 = fyx61 or fyx62 or fyx63
 
-    fyx71 = _hhv(h, 5) / _hhv(h, 120) > 0.85
-    fyx72 = _hhv(h, 5) / _hhv(h, 120) > 0.8 and fyx13
-    fyx73 = c[i] / _hhv(h, 10) > 0.9
+    near_high_ratio = _hhv(h, p["near_high_short_days"]) / _hhv(h, p["near_high_long_days"])
+    fyx71 = near_high_ratio > p["near_high_ratio_1"]
+    fyx72 = near_high_ratio > p["near_high_ratio_2"] and fyx13
+    fyx73 = c[i] / _hhv(h, p["close_near_high_days"]) > p["close_near_high_ratio"]
     fyx7 = (fyx71 or fyx72) and fyx73
+    signal_results = {
+        "FYX11": fyx11, "FYX12": fyx12, "FYX13": fyx13,
+        "FYX21": fyx21, "FYX22": fyx22, "FYX23": fyx23,
+        "FYX31": fyx31, "FYX32": fyx32, "FYX51": fyx51, "FYX52": fyx52,
+        "FYX61": fyx61, "FYX62": fyx62, "FYX63": fyx63,
+        "FYX71": fyx71, "FYX72": fyx72, "FYX73": fyx73,
+        "FYX1": fyx1, "FYX2": fyx2, "FYX3": fyx3, "FYX4": fyx4,
+        "FYX5": fyx5, "FYX6": fyx6, "FYX7": fyx7,
+    }
+    matched = quant_formula.evaluate_expression(
+        config["technical_expression"],
+        quant_formula.allowed_signals("monthly_reversal_62"),
+        signal_results,
+    )
     signals = [fyx1, fyx2, fyx3, fyx4, fyx5, fyx6, fyx7]
     return {
-        "matched": all(signals),
+        "matched": matched,
+        "signal_results": signal_results,
         "strategy_detail": "FYX1–FYX7：" + " / ".join("✓" if value else "×" for value in signals),
         "close": round(c[i], 3),
         "year_high": round(_hhv(h, 250), 3),
@@ -699,8 +773,12 @@ def monthly_reversal_62(bars: list[dict], rps: dict) -> dict | None:
 
 def growth_mrgc_sxhcg(
     bars: list[dict], rps: dict, turnover_pct: float | None,
+    formula_config: dict | None = None,
 ) -> dict | None:
-    data = _technical_series(bars, 280)
+    config = formula_config or quant_formula.normalize_formula("growth_mrgc_sxhcg")
+    p = config["params"]
+    minimum = max(280, 250 + p["above_ma_window"], 20 + p["ma_trend_days"])
+    data = _technical_series(bars, minimum)
     if not data or turnover_pct is None:
         return None
     c, h, l = data["close"], data["high"], data["low"]
@@ -709,10 +787,10 @@ def growth_mrgc_sxhcg(
     rps50, rps120, rps250 = rps["rps50"], rps["rps120"], rps["rps250"]
     drawdown120 = _drawdown_from_recent_high(h, l, 120)
     drawdown20 = _drawdown_from_recent_high(h, l, 20)
-    mrgc001 = drawdown120 <= 0.5
-    mrgc002 = c[i] / _hhv(c, 250) > 0.7
-    mrgc003 = drawdown120 <= 0.35
-    mrgc004 = c[i] / _hhv(c, 250) > 0.8
+    mrgc001 = drawdown120 <= p["drawdown120_max_pct"] / 100
+    mrgc002 = c[i] / _hhv(c, 250) > p["year_ratio_1"]
+    mrgc003 = drawdown120 <= p["drawdown120_strict_pct"] / 100
+    mrgc004 = c[i] / _hhv(c, 250) > p["year_ratio_2"]
     mrgc_hc = mrgc003 and mrgc004
 
     close_new_high = [
@@ -721,44 +799,74 @@ def growth_mrgc_sxhcg(
     ]
     xg1 = (
         _count_last(close_new_high, 5) >= 1
-        and ((rps120 > 95.99 or rps250 > 95.99) or (rps120 > 94.99 and rps50 > 94.99))
+        and (
+            (rps120 >= p["rps_xg1_or_min"] or rps250 >= p["rps_xg1_or_min"])
+            or (rps120 >= p["rps_xg1_and_min"] and rps50 >= p["rps_xg1_and_min"])
+        )
     )
-    xg2 = c[i] / _hhv(h, 250) >= 0.85 and (rps120 > 96.99 or rps250 > 96.99)
-    xg3 = c[i] / _hhv(h, 250) >= 0.70 and (rps120 > 97.99 or rps250 > 97.99)
-    xg4 = mrgc_hc and (rps120 > 94.99 or rps250 > 94.99)
-    mrgc = turnover_pct < 25 and mrgc001 and mrgc002 and (xg1 or xg2 or xg3 or xg4)
+    xg2 = c[i] / _hhv(h, 250) >= p["year_ratio_3"] and (
+        rps120 >= p["rps_xg2_min"] or rps250 >= p["rps_xg2_min"]
+    )
+    xg3 = c[i] / _hhv(h, 250) >= p["year_ratio_1"] and (
+        rps120 >= p["rps_xg3_min"] or rps250 >= p["rps_xg3_min"]
+    )
+    xg4 = mrgc_hc and (
+        rps120 >= p["rps_xg4_min"] or rps250 >= p["rps_xg4_min"]
+    )
+    mrgc00 = turnover_pct < p["mrgc_turnover_max_pct"]
+    mrgc = mrgc00 and mrgc001 and mrgc002 and (xg1 or xg2 or xg3 or xg4)
 
     above250 = [value is not None and c[j] > value for j, value in enumerate(ma250)]
     above200 = [value is not None and c[j] > value for j, value in enumerate(ma200)]
     above20 = [value is not None and c[j] > value for j, value in enumerate(ma20)]
     above10 = [value is not None and c[j] > value for j, value in enumerate(ma10)]
-    sxhcg1 = rps120 + rps250 > 185
+    sxhcg1 = rps120 + rps250 > p["rps_sum_min"]
     sxhcg2 = (
         c[i] > ma20[i]
-        and _count_last(above250, 30) >= 25
-        and _count_last(above200, 30) >= 25
+        and _count_last(above250, p["above_ma_window"]) >= p["above_ma_min_days"]
+        and _count_last(above200, p["above_ma_window"]) >= p["above_ma_min_days"]
         and (
-            _count_last(above20, 10) >= 9
-            or (_count_last(above10, 4) >= 3 and _count_last(above20, 4) >= 3)
+            _count_last(above20, p["above20_window"]) >= p["above20_min_days"]
+            or (
+                _count_last(above10, p["recent_ma_window"]) >= p["recent_ma_min_days"]
+                and _count_last(above20, p["recent_ma_window"]) >= p["recent_ma_min_days"]
+            )
         )
     )
-    sxhcg3 = drawdown20 <= 0.25 and c[i] / _hhv(c, 250) > 0.8
+    sxhcg3 = drawdown20 <= p["drawdown20_max_pct"] / 100 and c[i] / _hhv(c, 250) > p["year_ratio_2"]
+    trend_days = p["ma_trend_days"]
     sxhcg411 = all(
         ma20[j] is not None and ma20[j - 1] is not None and ma20[j] >= ma20[j - 1]
-        for j in range(i - 4, i + 1)
+        for j in range(i - trend_days + 1, i + 1)
     )
     sxhcg412 = all(
         ma10[j] is not None and ma20[j] is not None and ma10[j] >= ma20[j]
-        for j in range(i - 4, i + 1)
+        for j in range(i - trend_days + 1, i + 1)
     )
     sxhcg41 = sxhcg411 and sxhcg412
     sxhcg42 = ma10[i] >= ma10[i - 1] and ma20[i] >= ma20[i - 1] and ma10[i] >= ma20[i]
     sxhcg4 = sxhcg41 or sxhcg42
-    sxhcg = sxhcg1 and sxhcg2 and sxhcg3 and sxhcg4 and turnover_pct < 15 and mrgc001
+    sxhcg5 = turnover_pct < p["sxhcg_turnover_max_pct"]
+    sxhcg6 = mrgc001
+    sxhcg = sxhcg1 and sxhcg2 and sxhcg3 and sxhcg4 and sxhcg5 and sxhcg6
+    signal_results = {
+        "MRGC00": mrgc00, "MRGC001": mrgc001, "MRGC002": mrgc002,
+        "MRGC003": mrgc003, "MRGC004": mrgc004, "MRGC_HC": mrgc_hc,
+        "XG1": xg1, "XG2": xg2, "XG3": xg3, "XG4": xg4, "MRGC": mrgc,
+        "SXHCG1": sxhcg1, "SXHCG2": sxhcg2, "SXHCG3": sxhcg3,
+        "SXHCG4": sxhcg4, "SXHCG5": sxhcg5, "SXHCG6": sxhcg6,
+        "SXHCG": sxhcg,
+    }
+    technical_candidate = quant_formula.evaluate_expression(
+        config["technical_expression"],
+        quant_formula.allowed_signals("growth_mrgc_sxhcg"),
+        signal_results,
+    )
     return {
-        "technical_candidate": mrgc or sxhcg,
+        "technical_candidate": technical_candidate,
         "mrgc": mrgc,
         "sxhcg": sxhcg,
+        "signal_results": signal_results,
         "strategy_detail": f"MRGC={'✓' if mrgc else '×'} / SXHCG={'✓' if sxhcg else '×'}",
         "turnover_pct": round(turnover_pct, 3),
         "drawdown120_pct": round(drawdown120 * 100, 3),
@@ -826,17 +934,26 @@ def near_year_high(bars: list[dict], proximity_pct: float, lookback_days: int) -
     }
 
 
-def run_screen(
+def _run_screen_named_signals(
     fund_ratio_min: float = 5.0,
     north_value_min_yi: float = 1.0,
     near_high_pct: float = 5.0,
     lookback_days: int = 250,
     fund_period: str | None = None,
     strategy: str = "near_high",
+    formula: dict | None = None,
 ) -> dict:
     if strategy not in _STRATEGIES:
         raise ValueError(f"不支持的量化策略：{strategy}")
 
+    compiled_formula = quant_formula.compile_formula(
+        strategy,
+        formula,
+        legacy_near_high_pct=near_high_pct,
+        legacy_lookback_days=lookback_days,
+    )
+    formula_config = compiled_formula.config
+    formula_params = formula_config["params"]
     started = time.perf_counter()
     base = base_pool(fund_ratio_min, north_value_min_yi, fund_period)
     rps_data = rps_snapshot() if strategy != "near_high" else None
@@ -851,13 +968,13 @@ def run_screen(
     financial_candidates: list[dict] = []
     failures = 0
     latest_technical_date: str | None = None
-    kline_days = lookback_days if strategy == "near_high" else 320
+    kline_days = quant_formula.required_history(strategy, formula_config)
     prepared: list[tuple[dict, dict | None]] = []
     for original in base["rows"]:
         row = dict(original)
         rps = rps_by_code.get(row["code"])
         if rps:
-            row.update(rps)
+            row.update({key: value for key, value in rps.items() if key != "history"})
         if strategy == "growth_mrgc_sxhcg":
             row["turnover_pct"] = _finite((quotes.get(row["code"]) or {}).get("turnover_pct"))
         if strategy != "near_high" and not rps:
@@ -882,13 +999,28 @@ def run_screen(
                 continue
             try:
                 if strategy == "near_high":
-                    technical = near_year_high(bars, near_high_pct, lookback_days)
-                    is_match = bool(technical and technical["near_high"])
+                    technical = near_year_high(
+                        bars,
+                        formula_params["max_distance_pct"],
+                        formula_params["lookback_days"],
+                    )
+                    if technical:
+                        technical["signal_results"] = {"NEAR_HIGH": technical["near_high"]}
+                        is_match = quant_formula.evaluate_expression(
+                            formula_config["technical_expression"],
+                            quant_formula.allowed_signals("near_high"),
+                            technical["signal_results"],
+                        )
+                        technical["matched"] = is_match
+                    else:
+                        is_match = False
                 elif strategy == "monthly_reversal_62":
-                    technical = monthly_reversal_62(bars, rps)
+                    technical = monthly_reversal_62(bars, rps, formula_config)
                     is_match = bool(technical and technical["matched"])
                 else:
-                    technical = growth_mrgc_sxhcg(bars, rps, row.get("turnover_pct"))
+                    technical = growth_mrgc_sxhcg(
+                        bars, rps, row.get("turnover_pct"), formula_config,
+                    )
                     is_match = False
                 if not technical:
                     failures += 1
@@ -905,8 +1037,30 @@ def run_screen(
                         "net_profit_yoy_pct": None,
                         "matched": False,
                     })
-                    if technical["technical_candidate"] and not row["code"].startswith("688"):
-                        financial_candidates.append(row)
+                    if technical["technical_candidate"]:
+                        fundamental_names = quant_formula.expression_names(
+                            formula_config["fundamental_expression"],
+                        )
+                        needs_financials = bool(
+                            fundamental_names & {"REVENUE_YOY_OK", "NET_PROFIT_YOY_OK"}
+                        )
+                        if needs_financials:
+                            financial_candidates.append(row)
+                        else:
+                            prefixes = tuple(formula_params["excluded_prefixes"])
+                            fundamental_signals = {
+                                "REVENUE_YOY_OK": False,
+                                "NET_PROFIT_YOY_OK": False,
+                                "NON_EXCLUDED_BOARD": not row["code"].startswith(prefixes),
+                            }
+                            row["signal_results"].update(fundamental_signals)
+                            row["matched"] = quant_formula.evaluate_expression(
+                                formula_config["fundamental_expression"],
+                                quant_formula.allowed_signals("growth_mrgc_sxhcg", "fundamental"),
+                                fundamental_signals,
+                            )
+                            if row["matched"]:
+                                matched.append(dict(row))
 
                 if technical["technical_date"] and (
                     latest_technical_date is None
@@ -935,11 +1089,23 @@ def run_screen(
                     continue
                 revenue_yoy = row.get("revenue_yoy_pct")
                 net_profit_yoy = row.get("net_profit_yoy_pct")
-                row["matched"] = bool(
-                    revenue_yoy is not None
-                    and net_profit_yoy is not None
-                    and revenue_yoy > 20
-                    and net_profit_yoy > 40
+                prefixes = tuple(formula_params["excluded_prefixes"])
+                fundamental_signals = {
+                    "REVENUE_YOY_OK": bool(
+                        revenue_yoy is not None
+                        and revenue_yoy > formula_params["revenue_yoy_min_pct"]
+                    ),
+                    "NET_PROFIT_YOY_OK": bool(
+                        net_profit_yoy is not None
+                        and net_profit_yoy > formula_params["net_profit_yoy_min_pct"]
+                    ),
+                    "NON_EXCLUDED_BOARD": not row["code"].startswith(prefixes),
+                }
+                row["signal_results"].update(fundamental_signals)
+                row["matched"] = quant_formula.evaluate_expression(
+                    formula_config["fundamental_expression"],
+                    quant_formula.allowed_signals("growth_mrgc_sxhcg", "fundamental"),
+                    fundamental_signals,
                 )
                 if row["matched"]:
                     matched.append(dict(row))
@@ -957,14 +1123,6 @@ def run_screen(
             row["code"],
         ))
 
-    formulas = {
-        "near_high": f"C >= HHV(H,{lookback_days}) * {1 - near_high_pct / 100:.4f}",
-        "monthly_reversal_62": "YXFZ:=FYX1 AND FYX2 AND FYX3 AND FYX4 AND FYX5 AND FYX6 AND FYX7",
-        "growth_mrgc_sxhcg": (
-            "(SXHCG OR MRGC) AND FINANCE(44)>20 AND FINANCE(43)>40 "
-            "AND NOT(CODELIKE('688'))"
-        ),
-    }
     rps_meta = None
     if rps_data:
         rps_meta = {
@@ -980,13 +1138,16 @@ def run_screen(
         "criteria": {
             "fund_ratio_min": fund_ratio_min,
             "north_value_min_yi": north_value_min_yi,
-            "near_high_pct": near_high_pct,
-            "lookback_days": lookback_days,
+            "near_high_pct": formula_params.get("max_distance_pct", near_high_pct),
+            "lookback_days": formula_params.get("lookback_days", kline_days),
             "tdx_formula": (
                 f"(FUND_FREE_RATIO >= {fund_ratio_min:g} OR "
                 f"NORTH_HOLD_VALUE >= {north_value_min_yi:g}亿)；基础池内执行："
-                f"{formulas[strategy]}"
+                f"{formula_config['technical_expression']}"
             ),
+            "effective_formula": compiled_formula.effective,
+            "formula_hash": compiled_formula.hash,
+            "formula_config": formula_config,
         },
         "rps_meta": rps_meta,
         "fund_period": base["fund_period"],
@@ -1006,3 +1167,315 @@ def run_screen(
         "base_rows": base_rows,
         "rows": matched,
     }
+
+
+def _tdx_formula_hash(source: str) -> str:
+    normalized = source.replace("\r\n", "\n").strip() + "\n"
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def _tdx_capital_from_turnover(bars: list[dict], turnover_pct: float | None) -> float | None:
+    """用最新换手率反推通达信 CAPITAL 单位，使 VOL/CAPITAL*100 与行情一致。"""
+    if not bars or turnover_pct is None or turnover_pct <= 0:
+        return None
+    latest = bars[-1]
+    volume = _finite(latest.get("vol") if latest.get("vol") is not None else latest.get("volume"))
+    return volume * 100 / turnover_pct if volume is not None and volume > 0 else None
+
+
+def _tdx_evaluation_bars(bars: list[dict]) -> list[dict]:
+    """保留既有顺序；测试桩没有唯一日期时去掉日期元数据再交给解释器。"""
+    dates = [str(bar.get("datetime") or bar.get("date") or "") for bar in bars]
+    if all(dates) and any(current <= previous for previous, current in zip(dates, dates[1:])):
+        return [
+            {key: value for key, value in bar.items() if key not in {"datetime", "date"}}
+            for bar in bars
+        ]
+    return bars
+
+
+def _tdx_rps_for_bars(rps: dict | None, bars: list[dict]) -> dict | None:
+    """将最近RPS横截面历史按K线日期对齐，供REF/BARSSINCEN等历史公式使用。"""
+    if not rps or not rps.get("history"):
+        return rps
+    history = {item.get("trade_date"): item for item in rps["history"]}
+    result: dict[str, list[float | None]] = {
+        "rps50": [], "rps120": [], "rps250": [],
+    }
+    for bar in bars:
+        trade_date = str(bar.get("datetime") or bar.get("date") or "")[:10]
+        point = history.get(trade_date) or {}
+        for key in result:
+            result[key].append(_finite(point.get(key)))
+    return result
+
+
+def _tdx_apply_evaluation(row: dict, bars: list[dict], evaluation: dict) -> None:
+    variables = evaluation.get("variables") or {}
+    upper_variables = {str(key).upper(): value for key, value in variables.items()}
+    row["matched"] = bool(evaluation.get("matched"))
+    row["signal_results"] = {
+        str(key): bool(value)
+        for key, value in variables.items()
+        if value is not None
+    }
+    if "MRGC" in upper_variables or "SXHCG" in upper_variables:
+        mrgc = bool(upper_variables.get("MRGC"))
+        sxhcg = bool(upper_variables.get("SXHCG"))
+        row.update({
+            "mrgc": mrgc,
+            "sxhcg": sxhcg,
+            "strategy_detail": f"MRGC={'✓' if mrgc else '×'} / SXHCG={'✓' if sxhcg else '×'}",
+        })
+    elif all(f"FYX{index}" in upper_variables for index in range(1, 8)):
+        signals = [bool(upper_variables[f"FYX{index}"]) for index in range(1, 8)]
+        row["strategy_detail"] = "FYX1–FYX7：" + " / ".join("✓" if value else "×" for value in signals)
+    else:
+        outputs = evaluation.get("outputs") or []
+        output = outputs[-1] if outputs else None
+        output_name = (output or {}).get("name") or "最终条件"
+        row["strategy_detail"] = f"{output_name}={'✓' if evaluation.get('matched') else '×'}"
+
+    closes = _series(bars, "close")
+    highs = _series(bars, "high")
+    if closes and highs:
+        close = closes[-1]
+        period_high = max(highs[-min(250, len(highs)):])
+        row.update({
+            "close": round(close, 3),
+            "year_high": round(period_high, 3),
+            "distance_to_high_pct": round(max(0.0, (period_high - close) / period_high * 100), 3),
+        })
+    row["history_days"] = len(bars)
+    row["technical_date"] = str(bars[-1].get("datetime") or "")[:10] or None
+
+
+def _run_screen_tdx(
+    *,
+    fund_ratio_min: float,
+    north_value_min_yi: float,
+    fund_period: str | None,
+    strategy: str,
+    formula_source: str | None,
+) -> dict:
+    if strategy not in _STRATEGIES:
+        raise ValueError(f"不支持的量化策略：{strategy}")
+    preset = tdx_presets.get_preset(strategy)
+    source = formula_source if formula_source is not None else preset["default_source"]
+    program = tdx_formula.compile_formula(source)
+    formula_hash = _tdx_formula_hash(source)
+    minimum_history = tdx_presets.effective_history(strategy, program)
+    fetch_history = max(minimum_history, int(program.required_history))
+    source_upper = source.upper()
+    uses_capital = bool(re.search(r"(?<![A-Z0-9_])CAPITAL(?![A-Z0-9_])", source_upper))
+
+    started = time.perf_counter()
+    base = base_pool(fund_ratio_min, north_value_min_yi, fund_period)
+    rps_data = rps_snapshot() if program.uses_rps else None
+    rps_by_code = rps_data["stocks"] if rps_data else {}
+    quotes = (
+        _batch_quotes([row["code"] for row in base["rows"]])
+        if uses_capital else {}
+    )
+    matched: list[dict] = []
+    base_rows: list[dict] = []
+    financial_candidates: list[tuple[dict, list[dict], dict | None, float | None]] = []
+    failures = 0
+    runtime_error_sample: str | None = None
+    latest_technical_date: str | None = None
+
+    prepared: list[tuple[dict, dict | None]] = []
+    for original in base["rows"]:
+        row = dict(original)
+        rps = rps_by_code.get(row["code"])
+        if rps:
+            row.update({key: value for key, value in rps.items() if key != "history"})
+        if program.uses_rps and not rps:
+            failures += 1
+            base_rows.append(row)
+            continue
+        if uses_capital:
+            row["turnover_pct"] = _finite((quotes.get(row["code"]) or {}).get("turnover_pct"))
+        prepared.append((row, rps))
+
+    workers = max(2, min(12, int(os.environ.get("VR_SCREEN_WORKERS", "8"))))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_daily_bar_records, row["code"], fetch_history): (row, rps)
+            for row, rps in prepared
+        }
+        for future in as_completed(futures):
+            row, rps = futures[future]
+            try:
+                bars = future.result()
+                if len(bars) < minimum_history:
+                    raise tdx_formula.TdxFormulaEvaluationError(
+                        f"K线不足：至少需要{minimum_history}日，实际{len(bars)}日",
+                        code="insufficient_history",
+                    )
+                capital = _tdx_capital_from_turnover(bars, row.get("turnover_pct")) if uses_capital else None
+                eval_bars = _tdx_evaluation_bars(bars)
+                formula_rps = _tdx_rps_for_bars(rps, bars)
+                if uses_capital and capital is None:
+                    raise tdx_formula.TdxFormulaEvaluationError(
+                        "公式使用 CAPITAL，但无法取得最新换手率/成交量",
+                        code="missing_capital",
+                    )
+
+                if program.uses_finance:
+                    # 用户给出的增长公式均为 FINANCE(43/44) 大于阈值。先用极大值
+                    # 执行完整技术部分，只对可能命中的股票请求较慢的逐股财务源。
+                    probe = program.evaluate(
+                        eval_bars,
+                        rps=formula_rps,
+                        financial={"43": 1_000_000_000, "44": 1_000_000_000},
+                        code=row["code"],
+                        capital=capital,
+                    )
+                    _tdx_apply_evaluation(row, bars, probe)
+                    row.update({
+                        "matched": False,
+                        "financial_period": None,
+                        "revenue_yoy_pct": None,
+                        "net_profit_yoy_pct": None,
+                    })
+                    if probe["matched"]:
+                        financial_candidates.append((row, bars, rps, capital))
+                else:
+                    evaluation = program.evaluate(
+                        eval_bars, rps=formula_rps, code=row["code"], capital=capital,
+                    )
+                    _tdx_apply_evaluation(row, bars, evaluation)
+                    if evaluation["matched"]:
+                        matched.append(dict(row))
+
+                technical_date = row.get("technical_date")
+                if technical_date and (latest_technical_date is None or technical_date > latest_technical_date):
+                    latest_technical_date = technical_date
+            except Exception as error:  # noqa: BLE001 — 单股数据异常不打断全池
+                failures += 1
+                if runtime_error_sample is None:
+                    runtime_error_sample = str(error)
+            base_rows.append(row)
+
+    if financial_candidates:
+        finance_workers = min(6, len(financial_candidates))
+        with ThreadPoolExecutor(max_workers=finance_workers) as executor:
+            futures = {
+                executor.submit(_financial_growth, row["code"]): (row, bars, rps, capital)
+                for row, bars, rps, capital in financial_candidates
+            }
+            for future in as_completed(futures):
+                row, bars, rps, capital = futures[future]
+                try:
+                    financial = future.result()
+                    row.update(financial)
+                    evaluation = program.evaluate(
+                        _tdx_evaluation_bars(bars),
+                        rps=_tdx_rps_for_bars(rps, bars),
+                        financial={
+                            "43": financial.get("net_profit_yoy_pct"),
+                            "44": financial.get("revenue_yoy_pct"),
+                        },
+                        code=row["code"],
+                        capital=capital,
+                    )
+                    _tdx_apply_evaluation(row, bars, evaluation)
+                    if evaluation["matched"]:
+                        matched.append(dict(row))
+                except Exception as error:  # noqa: BLE001
+                    failures += 1
+                    if runtime_error_sample is None:
+                        runtime_error_sample = str(error)
+
+    matched.sort(key=lambda row: (
+        -((row.get("rps120") or 0) + (row.get("rps250") or 0)),
+        row.get("distance_to_high_pct") or 0,
+        row["code"],
+    ))
+    if strategy == "near_high":
+        matched.sort(key=lambda row: (
+            row.get("distance_to_high_pct") or 0,
+            -(row.get("fund_float_ratio_pct") or 0),
+            row["code"],
+        ))
+
+    rps_meta = None
+    if rps_data:
+        rps_meta = {
+            key: rps_data[key]
+            for key in (
+                "trade_date", "universe_count", "eligible_count",
+                "excluded_short_history_count", "rule",
+            )
+        }
+    return {
+        "strategy": strategy,
+        "strategy_label": _STRATEGIES[strategy],
+        "criteria": {
+            "fund_ratio_min": fund_ratio_min,
+            "north_value_min_yi": north_value_min_yi,
+            "lookback_days": fetch_history,
+            "tdx_formula": (
+                f"(FUND_FREE_RATIO >= {fund_ratio_min:g} OR "
+                f"NORTH_HOLD_VALUE >= {north_value_min_yi:g}亿)；基础池内执行当前通达信源码"
+            ),
+            "formula_source": source,
+            "formula_hash": formula_hash,
+            "required_history": fetch_history,
+            "minimum_history": minimum_history,
+            "used_functions": list(program.used_functions),
+            "runtime_error_sample": runtime_error_sample,
+        },
+        "rps_meta": rps_meta,
+        "fund_period": base["fund_period"],
+        "north_period": base["north_period"],
+        "technical_date": latest_technical_date,
+        "fund_candidate_count": base["fund_candidate_count"],
+        "north_candidate_count": base["north_candidate_count"],
+        "overlap_count": base["overlap_count"],
+        "base_count": base["base_count"],
+        "matched_count": len(matched),
+        "technical_failure_count": failures,
+        "elapsed_seconds": round(time.perf_counter() - started, 2),
+        "north_disclosure_note": (
+            "北向个股持仓自2024-08-19起改为季度披露；这里使用港交所最新季度末持股数量，"
+            "再按腾讯最新行情估算持股市值，不是每日更新的持仓数量。"
+        ),
+        "base_rows": base_rows,
+        "rows": matched,
+    }
+
+
+def run_screen(
+    fund_ratio_min: float = 5.0,
+    north_value_min_yi: float = 1.0,
+    near_high_pct: float = 5.0,
+    lookback_days: int = 250,
+    fund_period: str | None = None,
+    strategy: str = "near_high",
+    formula: dict | None = None,
+    formula_source: str | None = None,
+) -> dict:
+    """执行量化筛选。
+
+    ``formula_source`` 是当前页面使用的通达信兼容源码；旧版结构化 ``formula``
+    仍保留兼容，避免已有调用方突然失效。
+    """
+    if formula is not None and formula_source is None:
+        return _run_screen_named_signals(
+            fund_ratio_min=fund_ratio_min,
+            north_value_min_yi=north_value_min_yi,
+            near_high_pct=near_high_pct,
+            lookback_days=lookback_days,
+            fund_period=fund_period,
+            strategy=strategy,
+            formula=formula,
+        )
+    return _run_screen_tdx(
+        fund_ratio_min=fund_ratio_min,
+        north_value_min_yi=north_value_min_yi,
+        fund_period=fund_period,
+        strategy=strategy,
+        formula_source=formula_source,
+    )

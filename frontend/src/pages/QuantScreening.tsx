@@ -1,49 +1,95 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle, Database, Filter, Layers3, LoaderCircle, Play,
-  RefreshCw, TrendingUp,
+  AlertTriangle, ChevronDown, ChevronUp, Code2, Database,
+  Filter, Layers3, LoaderCircle, Pencil, Play, Plus, RefreshCw,
+  SlidersHorizontal, TrendingUp, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import {
-  ApiError, api, type QuantRow, type QuantScreenInput, type QuantScreenResult,
+  TdxFormulaEditor, type TdxFormulaValidationState,
+} from "@/components/quant/TdxFormulaEditor";
+import {
+  ApiError, api, type TdxFormulaIssue, type TdxFormulaPreset, type QuantRow,
+  type QuantScreenResult, type QuantStrategy,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const DEFAULTS: QuantScreenInput = {
-  strategy: "near_high",
-  fund_ratio_min: 5,
-  north_value_min_yi: 1,
-  near_high_pct: 5,
-  lookback_days: 250,
+// ── 自定义策略类型 ──────────────────────────────────────────────────────────
+interface CustomStrategy {
+  key: string;            // "custom-{timestamp}"
+  label: string;
+  description: string;
+  base_strategy: QuantStrategy;  // 决定引擎（RPS / 成长指标等）
+  source: string;         // 保存时的公式快照（"默认"）
+  createdAt: number;
+}
+
+// 展示用：将内置 preset 和自定义策略统一成同一形状
+interface DisplayStrategy {
+  key: string;
+  label: string;
+  description: string;
+  defaultSource: string;
+  baseStrategy: QuantStrategy;
+  isCustom: boolean;
+}
+
+const FORMULA_DRAFTS_KEY = "vr-quant-tdx-source-drafts-v1";
+const CUSTOM_STRATEGIES_KEY = "vr-quant-custom-strategies-v1";
+const BUILTIN_OVERRIDES_KEY = "vr-quant-builtin-overrides-v1";
+const HIDDEN_BUILTINS_KEY = "vr-quant-hidden-builtins-v1";
+
+type FormulaDrafts = Record<string, string>;
+type BuiltinOverrides = Record<string, { label?: string; description?: string }>;
+
+const readFormulaDrafts = (): FormulaDrafts => {
+  try { return JSON.parse(localStorage.getItem(FORMULA_DRAFTS_KEY) || "{}"); }
+  catch { return {}; }
+};
+const readCustomStrategies = (): CustomStrategy[] => {
+  try { return JSON.parse(localStorage.getItem(CUSTOM_STRATEGIES_KEY) || "[]"); }
+  catch { return []; }
+};
+const saveCustomStrategies = (list: CustomStrategy[]) => {
+  try { localStorage.setItem(CUSTOM_STRATEGIES_KEY, JSON.stringify(list)); }
+  catch { /* 隐私模式 */ }
+};
+const readBuiltinOverrides = (): BuiltinOverrides => {
+  try { return JSON.parse(localStorage.getItem(BUILTIN_OVERRIDES_KEY) || "{}"); }
+  catch { return {}; }
+};
+const saveBuiltinOverrides = (o: BuiltinOverrides) => {
+  try { localStorage.setItem(BUILTIN_OVERRIDES_KEY, JSON.stringify(o)); }
+  catch {}
+};
+const readHiddenBuiltins = (): string[] => {
+  try { return JSON.parse(localStorage.getItem(HIDDEN_BUILTINS_KEY) || "[]"); }
+  catch { return []; }
+};
+const saveHiddenBuiltins = (list: string[]) => {
+  try { localStorage.setItem(HIDDEN_BUILTINS_KEY, JSON.stringify(list)); }
+  catch {}
 };
 
-const STRATEGIES: Array<{
-  value: QuantScreenInput["strategy"]; label: string; description: string; formula: string;
-}> = [
-  {
-    value: "near_high",
-    label: "接近一年新高",
-    description: "收盘价距离指定周期最高价不超过设定比例。",
-    formula: "C >= HHV(H,250) * 0.95",
-  },
-  {
-    value: "monthly_reversal_62",
-    label: "月线反转 6.2",
-    description: "完整执行 FYX1–FYX7，使用全市场 RPS50 / RPS120。",
-    formula: "YXFZ := FYX1 AND FYX2 AND FYX3 AND FYX4 AND FYX5 AND FYX6 AND FYX7",
-  },
-  {
-    value: "growth_mrgc_sxhcg",
-    label: "RPS 高成长（MRGC / SXHCG）",
-    description: "执行 MRGC 或 SXHCG，并叠加营收、净利和非科创板过滤。",
-    formula: "(SXHCG OR MRGC) AND 营收同比>20 AND 净利同比>40 AND 非688",
-  },
-];
+const errorIssues = (reason: unknown): TdxFormulaIssue[] | undefined => {
+  if (!(reason instanceof ApiError) || !Array.isArray(reason.details)) return undefined;
+  return reason.details as TdxFormulaIssue[];
+};
 
 const numberText = (value: number | null | undefined, digits = 2) =>
   value == null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
+
+function SectionLabel({ icon, title, desc }: { icon: ReactNode; title: string; desc?: string }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <span className="text-primary">{icon}</span>
+      <span className="text-sm font-semibold">{title}</span>
+      {desc && <span className="text-xs text-muted-foreground">{desc}</span>}
+    </div>
+  );
+}
 
 function ConditionInput({
   label, value, suffix, min, max, step, onChange,
@@ -73,11 +119,118 @@ function ConditionInput({
 }
 
 export function QuantScreening() {
-  const [input, setInput] = useState<QuantScreenInput>(DEFAULTS);
+  // 筛选参数
+  const [fundRatioMin, setFundRatioMin] = useState(5);
+  const [northValueMin, setNorthValueMin] = useState(1);
+  const [selectedKey, setSelectedKey] = useState<string>("near_high");
+
+  // 运行状态
   const [result, setResult] = useState<QuantScreenResult | null>(null);
   const [view, setView] = useState<"matched" | "base">("matched");
   const [loading, setLoading] = useState(false);
+  const [formulaLoading, setFormulaLoading] = useState(true);
+  const [validating, setValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 策略数据
+  const [presets, setPresets] = useState<TdxFormulaPreset[]>([]);
+  const [customStrategies, setCustomStrategies] = useState<CustomStrategy[]>(() => readCustomStrategies());
+  const [drafts, setDrafts] = useState<FormulaDrafts>({});
+  const [validation, setValidation] = useState<TdxFormulaValidationState>({ status: "idle" });
+
+  // 编辑器折叠
+  const [showEditor, setShowEditor] = useState(false);
+
+  // 新增策略表单
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newBaseStrategy, setNewBaseStrategy] = useState<QuantStrategy>("near_high");
+  const [copyCurrentSource, setCopyCurrentSource] = useState(true);
+  const newLabelRef = useRef<HTMLInputElement>(null);
+
+  // 编辑策略名称/说明
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const editLabelRef = useRef<HTMLInputElement>(null);
+
+  // 内置策略覆盖（重命名/隐藏）
+  const [builtinOverrides, setBuiltinOverrides] = useState<BuiltinOverrides>(() => readBuiltinOverrides());
+  const [hiddenBuiltins, setHiddenBuiltins] = useState<string[]>(() => readHiddenBuiltins());
+
+  // 加载内置策略，初始化草稿
+  useEffect(() => {
+    let active = true;
+    setFormulaLoading(true);
+    api.quantFormulas()
+      .then((items) => {
+        if (!active) return;
+        const saved = readFormulaDrafts();
+        const next: FormulaDrafts = { ...saved };
+        // 内置策略：草稿不存在时用默认公式初始化
+        items.forEach((preset) => {
+          if (!next[preset.strategy] || !next[preset.strategy].trim()) {
+            next[preset.strategy] = preset.default_source;
+          }
+        });
+        setPresets(items);
+        setDrafts(next);
+      })
+      .catch((reason) => {
+        if (active) setError(reason instanceof ApiError ? reason.message : "加载选股公式失败");
+      })
+      .finally(() => { if (active) setFormulaLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  // 草稿持久化
+  useEffect(() => {
+    if (Object.keys(drafts).length === 0) return;
+    try { localStorage.setItem(FORMULA_DRAFTS_KEY, JSON.stringify(drafts)); }
+    catch { /* 隐私模式 */ }
+  }, [drafts]);
+
+  // 自定义策略持久化
+  useEffect(() => {
+    saveCustomStrategies(customStrategies);
+  }, [customStrategies]);
+
+  // 内置策略覆盖/隐藏持久化
+  useEffect(() => { saveBuiltinOverrides(builtinOverrides); }, [builtinOverrides]);
+  useEffect(() => { saveHiddenBuiltins(hiddenBuiltins); }, [hiddenBuiltins]);
+
+  // ── 统一策略列表（内置应用改名/过滤隐藏，自定义直接合并）──────────────────
+  const allStrategies = useMemo<DisplayStrategy[]>(() => [
+    ...presets
+      .filter((p) => !hiddenBuiltins.includes(p.strategy))
+      .map((p) => {
+        const ov = builtinOverrides[p.strategy] ?? {};
+        return {
+          key: p.strategy,
+          label: ov.label ?? p.label,
+          description: ov.description ?? p.description,
+          defaultSource: p.default_source,
+          baseStrategy: p.strategy as QuantStrategy,
+          isCustom: false,
+        };
+      }),
+    ...customStrategies.map((c) => ({
+      key: c.key,
+      label: c.label,
+      description: c.description,
+      defaultSource: c.source,
+      baseStrategy: c.base_strategy,
+      isCustom: true,
+    })),
+  ], [presets, customStrategies, builtinOverrides, hiddenBuiltins]);
+
+  const selected = allStrategies.find((s) => s.key === selectedKey);
+  const activeSource = drafts[selectedKey] ?? selected?.defaultSource ?? "";
+  const isDirty = useMemo(() => {
+    const draft = drafts[selectedKey] ?? "";
+    return selected ? draft.trim() !== selected.defaultSource.trim() : false;
+  }, [drafts, selectedKey, selected]);
 
   const rows = useMemo(
     () => (view === "matched" ? result?.rows ?? [] : result?.base_rows ?? []),
@@ -85,35 +238,158 @@ export function QuantScreening() {
   );
   const usesRps = result?.strategy !== "near_high";
   const isGrowth = result?.strategy === "growth_mrgc_sxhcg";
-  const selectedStrategy = STRATEGIES.find((item) => item.value === input.strategy)!;
 
-  const update = (key: keyof QuantScreenInput, value: number) => {
-    setInput((current) => ({ ...current, [key]: Number.isFinite(value) ? value : 0 }));
+  // ── 事件处理 ────────────────────────────────────────────────────────────────
+  const updateFormulaSource = (source: string) => {
+    setDrafts((cur) => ({ ...cur, [selectedKey]: source }));
+    setValidation({ status: "idle" });
+    setResult(null);
+  };
+
+  const validateFormula = async () => {
+    if (!activeSource.trim() || !selected) return;
+    setValidating(true);
+    setValidation({ status: "validating", message: "正在检查通达信语法和数据函数…" });
+    try {
+      const checked = await api.validateQuantFormula(selected.baseStrategy, activeSource);
+      setDrafts((cur) => ({ ...cur, [selectedKey]: checked.normalized_source }));
+      setValidation({
+        status: "valid",
+        message: `校验通过 · ${checked.formula_hash} · 读取 ${checked.required_history} 日${checked.minimum_history ? `（至少需 ${checked.minimum_history} 日）` : ""}`,
+        issues: checked.issues,
+      });
+    } catch (reason) {
+      setValidation({
+        status: "invalid",
+        message: reason instanceof ApiError ? reason.message : "公式校验失败",
+        issues: errorIssues(reason),
+      });
+    } finally { setValidating(false); }
   };
 
   const run = async () => {
+    if (!activeSource.trim() || !selected) {
+      setError("选股公式尚未加载完成");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const data = await api.quantScreen(input);
+      setValidation({ status: "validating", message: "运行前正在校验通达信公式…" });
+      const checked = await api.validateQuantFormula(selected.baseStrategy, activeSource);
+      setDrafts((cur) => ({ ...cur, [selectedKey]: checked.normalized_source }));
+      setValidation({
+        status: "valid",
+        message: `校验通过，当前筛选使用公式版本 ${checked.formula_hash}`,
+        issues: checked.issues,
+      });
+      const data = await api.quantScreen({
+        strategy: selected.baseStrategy,
+        fund_ratio_min: fundRatioMin,
+        north_value_min_yi: northValueMin,
+        formula_source: checked.normalized_source,
+      });
       setResult(data);
       setView("matched");
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "筛选失败，请稍后重试");
-    } finally {
-      setLoading(false);
+      if (reason instanceof ApiError && reason.status === 422) {
+        setValidation({ status: "invalid", message: reason.message, issues: errorIssues(reason) });
+      }
+    } finally { setLoading(false); }
+  };
+
+  const handleSelectStrategy = (key: string) => {
+    setSelectedKey(key);
+    setValidation({ status: "idle" });
+    setResult(null);
+    setView("matched");
+    setShowEditor(false);
+  };
+
+  const handleAddStrategy = () => {
+    const label = newLabel.trim();
+    if (!label) return;
+    const key = `custom-${Date.now()}`;
+    const source = copyCurrentSource ? (drafts[selectedKey] ?? selected?.defaultSource ?? "") : "";
+    const entry: CustomStrategy = {
+      key, label,
+      description: newDesc.trim(),
+      base_strategy: newBaseStrategy,
+      source,
+      createdAt: Date.now(),
+    };
+    setCustomStrategies((cur) => [...cur, entry]);
+    // 草稿用公式快照初始化
+    setDrafts((cur) => ({ ...cur, [key]: source }));
+    // 重置表单并选中新策略
+    setNewLabel(""); setNewDesc(""); setNewBaseStrategy("near_high");
+    setCopyCurrentSource(true); setShowAddForm(false);
+    handleSelectStrategy(key);
+  };
+
+  const handleDeleteStrategy = (key: string) => {
+    const strat = customStrategies.find((s) => s.key === key);
+    if (!strat) return;
+    if (!window.confirm(`确认删除自定义策略「${strat.label}」？此操作不可撤销。`)) return;
+    setCustomStrategies((cur) => cur.filter((s) => s.key !== key));
+    setDrafts((cur) => { const next = { ...cur }; delete next[key]; return next; });
+    if (selectedKey === key) handleSelectStrategy(allStrategies.find((s) => s.key !== key)?.key ?? "near_high");
+  };
+
+  const handleHideBuiltin = (key: string) => {
+    const strat = allStrategies.find((s) => s.key === key && !s.isCustom);
+    if (!strat) return;
+    if (!window.confirm(`隐藏内置策略「${strat.label}」？可在策略列表底部点击「恢复」找回。`)) return;
+    const next = [...hiddenBuiltins, key];
+    setHiddenBuiltins(next);
+    if (selectedKey === key) handleSelectStrategy(allStrategies.find((s) => s.key !== key)?.key ?? "near_high");
+  };
+
+  const handleRestoreBuiltins = () => {
+    setHiddenBuiltins([]);
+  };
+
+  const handleEditStrategy = (key: string) => {
+    const strat = allStrategies.find((s) => s.key === key);
+    if (!strat) return;
+    setEditingKey(key);
+    setEditLabel(strat.label);
+    setEditDesc(strat.description);
+    setShowAddForm(false);
+    setTimeout(() => editLabelRef.current?.focus(), 50);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingKey || !editLabel.trim()) return;
+    const label = editLabel.trim();
+    const description = editDesc.trim();
+    const strat = allStrategies.find((s) => s.key === editingKey);
+    if (!strat) { setEditingKey(null); return; }
+    if (strat.isCustom) {
+      setCustomStrategies((cur) =>
+        cur.map((s) => s.key === editingKey ? { ...s, label, description } : s)
+      );
+    } else {
+      setBuiltinOverrides((cur) => ({ ...cur, [editingKey]: { label, description } }));
     }
+    setEditingKey(null);
+  };
+
+  const openAddForm = () => {
+    setShowAddForm(true);
+    setEditingKey(null);
+    setNewBaseStrategy((selected?.baseStrategy ?? presets[0]?.strategy ?? "near_high") as QuantStrategy);
+    setTimeout(() => newLabelRef.current?.focus(), 50);
   };
 
   return (
     <div>
       <PageHeader
         title="量化选股"
-        subtitle="基金持仓或北向持仓满足任一条件即可入池，再执行通达信技术公式。"
+        subtitle="基金持仓或北向持仓满足任一条件即可入池，再叠加通达信技术公式二次筛选。"
         actions={result && (
-          <button
-            onClick={run}
-            disabled={loading}
+          <button onClick={run} disabled={loading}
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:text-primary disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> 重新筛选
@@ -122,89 +398,347 @@ export function QuantScreening() {
       />
 
       <GlassCard className="mb-4" glow>
-        <div className="mb-4 flex items-center gap-2">
-          <Filter className="h-4 w-4 text-primary" />
-          <div>
-            <h2 className="text-sm font-semibold">筛选条件</h2>
-            <p className="text-xs text-muted-foreground">基础池采用 OR：基金持股达标或北向持股市值达标，满足任一项即可入池。</p>
+        {/* ── 选股策略 ── */}
+        <SectionLabel icon={<SlidersHorizontal className="h-4 w-4" />} title="选股策略" />
+
+        {formulaLoading ? (
+          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> 正在加载策略列表…
           </div>
-        </div>
-        <label className="mb-4 block">
-          <span className="mb-1.5 block text-xs font-medium text-muted-foreground">通达信选股策略</span>
-          <select
-            data-testid="quant-strategy"
-            value={input.strategy}
-            onChange={(event) => setInput((current) => ({
-              ...current,
-              strategy: event.target.value as QuantScreenInput["strategy"],
-            }))}
-            className="w-full rounded-lg border border-border bg-black/20 px-3 py-2.5 text-sm outline-none focus:border-primary/50"
-          >
-            {STRATEGIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-          </select>
-          <span className="mt-1.5 block text-xs text-muted-foreground">{selectedStrategy.description}</span>
-        </label>
-        <div className={cn("grid gap-3", input.strategy === "near_high" ? "md:grid-cols-4" : "md:grid-cols-2")}>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {allStrategies.map((item) => (
+              <div key={item.key} className="group relative flex items-center">
+                <button
+                  data-testid={item.key === selectedKey ? "quant-strategy" : undefined}
+                  disabled={loading}
+                  onClick={() => handleSelectStrategy(item.key)}
+                  className={cn(
+                    "rounded-lg border py-2 pl-4 pr-[3.75rem] text-sm font-medium transition-all",
+                    item.key === selectedKey
+                      ? "border-primary/60 bg-primary/15 text-primary shadow-sm shadow-primary/10"
+                      : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground",
+                  )}
+                >
+                  {item.label}
+                  {item.isCustom && (
+                    <span className="ml-1.5 rounded-full bg-current/15 px-1.5 py-0.5 text-[9px] opacity-60">自定义</span>
+                  )}
+                </button>
+                {/* 重命名按钮（悬浮显示） */}
+                <button
+                  type="button"
+                  aria-label={`重命名策略 ${item.label}`}
+                  onClick={(e) => { e.stopPropagation(); handleEditStrategy(item.key); }}
+                  className="absolute right-7 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:text-primary"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                {/* 删除/隐藏按钮（悬浮显示） */}
+                <button
+                  type="button"
+                  aria-label={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    item.isCustom ? handleDeleteStrategy(item.key) : handleHideBuiltin(item.key);
+                  }}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:text-destructive"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+
+            {/* + 添加策略 */}
+            {!showAddForm && !editingKey && (
+              <button
+                type="button"
+                disabled={loading || formulaLoading}
+                onClick={openAddForm}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:border-primary/40 hover:text-primary disabled:opacity-40"
+              >
+                <Plus className="h-3.5 w-3.5" /> 添加策略
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 策略说明 */}
+        {selected && (
+          <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+            {selected.description || <span className="opacity-50">暂无说明</span>}
+            {selected.isCustom && (
+              <span className="ml-2 opacity-60">· 基础引擎：{selected.baseStrategy}</span>
+            )}
+          </p>
+        )}
+
+        {/* ── 新增策略表单 ── */}
+        {showAddForm && (
+          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
+            <p className="mb-3 text-sm font-semibold">新建自定义策略</p>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">策略名称 <span className="text-destructive">*</span></span>
+                <input
+                  ref={newLabelRef}
+                  type="text"
+                  value={newLabel}
+                  maxLength={30}
+                  placeholder="例如：均线金叉策略"
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && newLabel.trim() && handleAddStrategy()}
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">策略说明（可选）</span>
+                <input
+                  type="text"
+                  value={newDesc}
+                  maxLength={60}
+                  placeholder="简要描述选股逻辑"
+                  onChange={(e) => setNewDesc(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                />
+              </label>
+            </div>
+            <div className="mb-4">
+              <span className="mb-2 block text-xs font-medium text-muted-foreground">基础引擎</span>
+              <div className="flex flex-wrap gap-2">
+                {presets.map((p) => (
+                  <button
+                    key={p.strategy}
+                    type="button"
+                    onClick={() => setNewBaseStrategy(p.strategy as QuantStrategy)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+                      newBaseStrategy === p.strategy
+                        ? "border-primary/60 bg-primary/15 text-primary shadow-sm shadow-primary/10"
+                        : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                    )}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                {presets.find((p) => p.strategy === newBaseStrategy)?.description}
+              </p>
+            </div>
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={() => setCopyCurrentSource((v) => !v)}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-all",
+                  copyCurrentSource
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                )}
+              >
+                <span className={cn(
+                  "flex h-4 w-4 items-center justify-center rounded border text-[10px] transition-all",
+                  copyCurrentSource
+                    ? "border-primary/60 bg-primary/20 text-primary"
+                    : "border-border bg-black/20"
+                )}>
+                  {copyCurrentSource && "✓"}
+                </span>
+                以当前公式为起点
+              </button>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowAddForm(false); setNewLabel(""); setNewDesc(""); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!newLabel.trim()}
+                onClick={handleAddStrategy}
+                className="rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
+              >
+                保存策略
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── 编辑策略名称/说明表单 ── */}
+        {editingKey !== null && (
+          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
+            <p className="mb-3 text-sm font-semibold">
+              编辑策略：{allStrategies.find((s) => s.key === editingKey)?.isCustom ? "" : "（内置）"}
+              {allStrategies.find((s) => s.key === editingKey)?.label}
+            </p>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                  策略名称 <span className="text-destructive">*</span>
+                </span>
+                <input
+                  ref={editLabelRef}
+                  type="text"
+                  value={editLabel}
+                  maxLength={30}
+                  onChange={(e) => setEditLabel(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && editLabel.trim() && handleSaveEdit()}
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">策略说明</span>
+                <input
+                  type="text"
+                  value={editDesc}
+                  maxLength={60}
+                  placeholder="简要描述选股逻辑"
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingKey(null)}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!editLabel.trim()}
+                onClick={handleSaveEdit}
+                className="rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 已隐藏内置策略提示 */}
+        {hiddenBuiltins.length > 0 && (
+          <p className="mt-2.5 text-xs text-muted-foreground">
+            已隐藏 {hiddenBuiltins.length} 个内置策略
+            <button
+              type="button"
+              onClick={handleRestoreBuiltins}
+              className="ml-2 text-primary underline-offset-2 hover:underline"
+            >
+              全部恢复
+            </button>
+          </p>
+        )}
+
+        <div className="my-5 border-t border-border/40" />
+
+        {/* ── 基础池条件 ── */}
+        <SectionLabel
+          icon={<Filter className="h-4 w-4" />}
+          title="基础池条件"
+          desc="基金或北向满足任一项即可入池"
+        />
+        <div className="grid gap-3 sm:grid-cols-2">
           <ConditionInput
             label="基金持股占流通股 ≥"
-            value={input.fund_ratio_min}
+            value={fundRatioMin}
             suffix="%"
             min={0.1}
             max={100}
             step={0.5}
-            onChange={(value) => update("fund_ratio_min", value)}
+            onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); }}
           />
           <ConditionInput
             label="北向持股市值 ≥"
-            value={input.north_value_min_yi}
+            value={northValueMin}
             suffix="亿元"
             min={0}
             max={100000}
             step={0.5}
-            onChange={(value) => update("north_value_min_yi", value)}
+            onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); }}
           />
-          {input.strategy === "near_high" && (
-            <>
-              <ConditionInput
-                label="距离一年新高 ≤"
-                value={input.near_high_pct}
-                suffix="%"
-                min={0}
-                max={50}
-                step={0.5}
-                onChange={(value) => update("near_high_pct", value)}
-              />
-              <ConditionInput
-                label="通达信回看周期"
-                value={input.lookback_days}
-                suffix="交易日"
-                min={60}
-                max={800}
-                step={10}
-                onChange={(value) => update("lookback_days", value)}
-              />
-            </>
-          )}
         </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <code className="rounded-lg bg-black/25 px-3 py-2 text-xs text-primary/90">
-            {`(基金≥${input.fund_ratio_min}% OR 北向≥${input.north_value_min_yi}亿) → `}
-            {input.strategy === "near_high"
-              ? `C >= HHV(H,${input.lookback_days}) * ${(1 - input.near_high_pct / 100).toFixed(4)}`
-              : selectedStrategy.formula}
+
+        <div className="my-5 border-t border-border/40" />
+
+        {/* ── 公式源码（可折叠）── */}
+        {selected && activeSource && (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowEditor((v) => !v)}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg border px-4 py-3 text-sm transition-all",
+                showEditor
+                  ? "border-primary/40 bg-primary/5 text-foreground"
+                  : "border-border/60 bg-black/15 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+              )}
+            >
+              <div className="flex items-center gap-2.5">
+                <Code2 className={cn("h-4 w-4 shrink-0", showEditor ? "text-primary" : "")} />
+                <span className="font-medium">通达信公式源码</span>
+                <span className="font-mono text-xs opacity-70">
+                  {activeSource.split(/\r?\n/).length} 行
+                </span>
+                {isDirty && (
+                  <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
+                    已修改
+                  </span>
+                )}
+              </div>
+              {showEditor
+                ? <ChevronUp className="h-4 w-4 shrink-0 text-primary" />
+                : <ChevronDown className="h-4 w-4 shrink-0" />}
+            </button>
+
+            {showEditor && (
+              <div className="mt-3">
+                <TdxFormulaEditor
+                  source={activeSource}
+                  defaultSource={selected.defaultSource}
+                  strategyLabel={selected.label}
+                  validation={validation}
+                  disabled={loading}
+                  onSourceChange={updateFormulaSource}
+                  onValidate={validateFormula}
+                  onReset={() => {
+                    updateFormulaSource(selected.defaultSource);
+                    setValidation({ status: "idle", message: "已恢复当前策略的默认公式" });
+                  }}
+                />
+              </div>
+            )}
+
+            <div className="my-5 border-t border-border/40" />
+          </>
+        )}
+
+        {/* ── 条件摘要 + 执行按钮 ── */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <code className="min-w-0 flex-1 break-all rounded-lg bg-black/25 px-3 py-2 text-xs text-primary/80">
+            {`(基金 ≥ ${fundRatioMin}% OR 北向 ≥ ${northValueMin}亿) → `}
+            {activeSource
+              ? `执行 ${selected?.label ?? "通达信公式"}（${activeSource.split(/\r?\n/).length} 行）`
+              : "公式加载中…"}
           </code>
           <button
             data-testid="quant-run"
             onClick={run}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary/15 px-5 py-2.5 text-sm font-semibold text-primary shadow-glow hover:bg-primary/25 disabled:cursor-wait disabled:opacity-60"
+            disabled={loading || validating || formulaLoading || !activeSource.trim()}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary/15 px-5 py-2.5 text-sm font-semibold text-primary shadow-glow hover:bg-primary/25 disabled:cursor-wait disabled:opacity-60"
           >
             {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
             {loading
-              ? input.strategy === "near_high"
+              ? selected?.baseStrategy === "near_high"
                 ? "正在拉取持仓并计算日 K…"
                 : "正在构建全市场 RPS 并执行公式…"
-              : "开始两阶段筛选"}
+              : validating ? "正在验证公式…" : "验证并开始筛选"}
           </button>
         </div>
       </GlassCard>
@@ -261,6 +795,13 @@ export function QuantScreening() {
               <div>
                 <h2 className="font-semibold">筛选结果</h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">{result.criteria.tdx_formula}</p>
+                {result.criteria.formula_hash && (
+                  <p className="mt-1 font-mono text-[10px] text-primary/80">
+                    公式版本 {result.criteria.formula_hash}
+                    {result.criteria.required_history ? ` · 读取K线 ${result.criteria.required_history} 日` : ""}
+                    {result.criteria.minimum_history ? ` · 最少历史 ${result.criteria.minimum_history} 日` : ""}
+                  </p>
+                )}
               </div>
               <div className="flex rounded-lg bg-black/20 p-1 text-xs">
                 <button

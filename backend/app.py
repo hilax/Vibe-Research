@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,9 @@ import portfolio as pf
 import market
 import myreports as mr
 import quant
+import quant_formula
+import tdx_formula
+import tdx_presets
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
@@ -82,6 +86,102 @@ class QuantScreenReq(BaseModel):
     near_high_pct: float = Field(5.0, ge=0, le=50)
     lookback_days: int = Field(250, ge=60, le=800)
     fund_period: str | None = Field(None, pattern=r"^\d{4}-(03-31|06-30|09-30|12-31)$")
+    formula: dict[str, Any] | None = None
+    formula_source: str | None = Field(None, max_length=100000)
+
+
+class QuantFormulaValidateReq(BaseModel):
+    strategy: Literal["near_high", "monthly_reversal_62", "growth_mrgc_sxhcg"] = "near_high"
+    formula: dict[str, Any] | None = None
+    source: str | None = Field(None, max_length=100000)
+    # 兼容旧版“接近新高”页面：未提供 formula 时仍用这两个字段生成等价配置。
+    near_high_pct: float = Field(5.0, ge=0, le=50)
+    lookback_days: int = Field(250, ge=60, le=800)
+
+
+def _formula_validation_detail(error: quant_formula.FormulaValidationError) -> dict:
+    return {
+        "code": "formula_validation_error",
+        "message": str(error),
+        "issues": error.issues,
+    }
+
+
+def _tdx_formula_validation_detail(error: tdx_formula.TdxFormulaError) -> dict:
+    return {
+        "code": "tdx_formula_validation_error",
+        "message": str(error),
+        "issues": error.issues,
+    }
+
+
+@app.get("/api/quant/formulas")
+def quant_formulas():
+    """返回可直接复制/粘贴的通达信源码预设，并保留旧版参数描述兼容。"""
+    legacy = {item["strategy"]: item for item in quant_formula.strategy_presets()}
+    items = []
+    for item in tdx_presets.strategy_presets():
+        old = legacy.get(item["strategy"], {})
+        items.append({
+            **item,
+            "params": old.get("params", []),
+            "allowed_technical_signals": old.get("allowed_technical_signals", []),
+            "allowed_fundamental_signals": old.get("allowed_fundamental_signals", []),
+            "default_formula": old.get("default_formula"),
+        })
+    return {"data": items}
+
+
+@app.post("/api/quant/formula/validate")
+def quant_formula_validate(req: QuantFormulaValidateReq):
+    """仅编译并校验公式，不请求行情或触发耗时选股。"""
+    if req.source is not None:
+        try:
+            normalized = req.source.replace("\r\n", "\n").strip() + "\n"
+            program = tdx_formula.compile_formula(normalized)
+        except tdx_formula.TdxFormulaError as e:
+            raise HTTPException(422, detail=_tdx_formula_validation_detail(e)) from e
+        issues = []
+        if "DRAWICON" in program.used_functions:
+            issues.append({
+                "code": "drawing_function_compatibility",
+                "message": "DRAWICON 在选股中不绘图，其第一个条件参数作为公式结果。",
+                "severity": "warning",
+            })
+        last_statement = program.statements[-1]
+        minimum_history = tdx_presets.effective_history(req.strategy, program)
+        return {
+            "data": {
+                "valid": True,
+                "strategy": req.strategy,
+                "normalized_source": normalized,
+                "formula_hash": hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12],
+                "required_history": max(minimum_history, program.required_history),
+                "minimum_history": minimum_history,
+                "used_functions": list(program.used_functions),
+                "uses_rps": program.uses_rps,
+                "uses_finance": program.uses_finance,
+                "output_name": getattr(last_statement, "name", None),
+                "issues": issues,
+            }
+        }
+    try:
+        compiled = quant_formula.compile_formula(
+            req.strategy,
+            req.formula,
+            legacy_near_high_pct=req.near_high_pct,
+            legacy_lookback_days=req.lookback_days,
+        )
+    except quant_formula.FormulaValidationError as e:
+        raise HTTPException(422, detail=_formula_validation_detail(e)) from e
+    return {
+        "data": {
+            "strategy": req.strategy,
+            "normalized_formula": compiled.config,
+            "formula_hash": compiled.hash,
+            "effective_formula": compiled.effective,
+        }
+    }
 
 
 @app.post("/api/quant/screen")
@@ -89,6 +189,10 @@ def quant_screen(req: QuantScreenReq):
     """基金/北向基础池，再叠加所选通达信技术公式。"""
     try:
         return {"data": quant.run_screen(**req.model_dump())}
+    except tdx_formula.TdxFormulaError as e:
+        raise HTTPException(422, detail=_tdx_formula_validation_detail(e)) from e
+    except quant_formula.FormulaValidationError as e:
+        raise HTTPException(422, detail=_formula_validation_detail(e)) from e
     except astock.DependencyMissing as e:
         raise HTTPException(501, str(e)) from e
     except quant.QuantDataError as e:
