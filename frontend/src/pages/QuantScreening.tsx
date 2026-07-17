@@ -319,8 +319,16 @@ export function QuantScreening() {
     () => (view === "matched" ? result?.rows ?? [] : result?.base_rows ?? []),
     [result, view],
   );
-  const usesRps = result?.strategy !== "near_high";
-  const isGrowth = result?.strategy === "growth_mrgc_sxhcg";
+  const usesRps = result
+    ? (result.criteria.uses_rps ?? result.strategy !== "near_high")
+    : false;
+  const usesFinance = result
+    ? (result.criteria.uses_finance ?? result.strategy === "growth_mrgc_sxhcg")
+    : false;
+  const usesCapital = result
+    ? (result.criteria.uses_capital ?? result.strategy === "growth_mrgc_sxhcg")
+    : false;
+  const showsFormulaDetail = rows.some((row) => Boolean(row.strategy_detail));
 
   // ── 事件处理 ────────────────────────────────────────────────────────────────
   const updateFormulaSource = (source: string) => {
@@ -1067,8 +1075,9 @@ export function QuantScreening() {
                       {[
                         "名称 / 代码", "入池条件", "行业", "基金占流通股", "基金家数", "基金持有市值", "北向持有市值", "北向占A股",
                         ...(usesRps ? ["RPS20", "RPS50", "RPS120", "RPS250"] : []),
-                        ...(isGrowth ? ["换手率", "营收同比", "净利同比"] : []),
-                        "最新收盘", "一年最高", "距新高", ...(usesRps ? ["公式分支"] : []), "K线日期", "操作",
+                        ...(usesCapital ? ["换手率"] : []),
+                        ...(usesFinance ? ["营收同比", "净利同比"] : []),
+                        "最新收盘", "一年最高", "距新高", ...(showsFormulaDetail ? ["公式分支"] : []), "K线日期", "操作",
                       ].map((heading) => (
                         <th key={heading} className="whitespace-nowrap px-3 py-2.5 font-medium">{heading}</th>
                       ))}
@@ -1096,9 +1105,11 @@ export function QuantScreening() {
                             <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps250)}</td>
                           </>
                         )}
-                        {isGrowth && (
+                        {usesCapital && (
+                          <td className="px-3 py-2.5 font-mono">{numberText(row.turnover_pct)}%</td>
+                        )}
+                        {usesFinance && (
                           <>
-                            <td className="px-3 py-2.5 font-mono">{numberText(row.turnover_pct)}%</td>
                             <td className="px-3 py-2.5 font-mono">{numberText(row.revenue_yoy_pct)}%</td>
                             <td className="px-3 py-2.5 font-mono">{numberText(row.net_profit_yoy_pct)}%</td>
                           </>
@@ -1106,7 +1117,7 @@ export function QuantScreening() {
                         <td className="px-3 py-2.5 font-mono">{numberText(row.close, 3)}</td>
                         <td className="px-3 py-2.5 font-mono">{numberText(row.year_high, 3)}</td>
                         <td className="px-3 py-2.5 font-mono text-primary">{row.distance_to_high_pct == null ? "—" : `${numberText(row.distance_to_high_pct, 2)}%`}</td>
-                        {usesRps && <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{row.strategy_detail || "—"}</td>}
+                        {showsFormulaDetail && <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{row.strategy_detail || "—"}</td>}
                         <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">{row.technical_date || "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2.5">
                           {watchSet.has(row.code) ? (

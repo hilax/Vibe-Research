@@ -149,5 +149,8 @@ def test_growth_source_uses_rps_capital_and_finance_context(monkeypatch):
 
     assert result["matched_count"] == 1
     assert financial_calls == ["600000"]
+    assert result["criteria"]["uses_rps"] is True
+    assert result["criteria"]["uses_finance"] is True
+    assert result["criteria"]["uses_capital"] is True
     assert result["rows"][0]["mrgc"] is True
     assert result["rows"][0]["revenue_yoy_pct"] == 25

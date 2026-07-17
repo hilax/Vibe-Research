@@ -375,6 +375,7 @@ export interface QuantScreenResult {
     fund_ratio_min: number; north_value_min_yi: number;
     near_high_pct?: number; lookback_days?: number; tdx_formula: string;
     formula_source?: string; formula_hash?: string; required_history?: number; minimum_history?: number;
+    used_functions?: string[]; uses_rps?: boolean; uses_finance?: boolean; uses_capital?: boolean;
   };
   fund_period: string; north_period: string; technical_date: string | null;
   fund_candidate_count: number; north_candidate_count: number; overlap_count: number;

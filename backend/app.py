@@ -124,6 +124,18 @@ def _tdx_formula_validation_detail(error: tdx_formula.TdxFormulaError) -> dict:
 @app.get("/api/quant/formulas")
 def quant_formulas():
     """返回可直接复制/粘贴的通达信源码预设，并保留旧版参数描述兼容。"""
+    legacy = {item["strategy"]: item for item in quant_formula.strategy_presets()}
+    items = []
+    for item in tdx_presets.strategy_presets():
+        old = legacy.get(item["strategy"], {})
+        items.append({
+            **item,
+            "params": old.get("params", []),
+            "allowed_technical_signals": old.get("allowed_technical_signals", []),
+            "allowed_fundamental_signals": old.get("allowed_fundamental_signals", []),
+            "default_formula": old.get("default_formula"),
+        })
+    return {"data": items}
 
 
 @app.get("/api/quant/rps/status")
@@ -137,18 +149,6 @@ def quant_rps_trigger_prewarm():
     """手动触发一次预热（如用户觉得数据过期）。后端去重，重复触发返回 running=True。"""
     thread = quant.trigger_rps_prewarm()
     return {"data": {"triggered": thread is not None, **quant.get_rps_prewarm_status()}}
-    legacy = {item["strategy"]: item for item in quant_formula.strategy_presets()}
-    items = []
-    for item in tdx_presets.strategy_presets():
-        old = legacy.get(item["strategy"], {})
-        items.append({
-            **item,
-            "params": old.get("params", []),
-            "allowed_technical_signals": old.get("allowed_technical_signals", []),
-            "allowed_fundamental_signals": old.get("allowed_fundamental_signals", []),
-            "default_formula": old.get("default_formula"),
-        })
-    return {"data": items}
 
 
 @app.post("/api/quant/formula/validate")
