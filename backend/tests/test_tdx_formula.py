@@ -248,6 +248,21 @@ def test_rps_history_series_and_raw_external_data_are_supported():
     assert scaled["variables"]["RPS120"] == raw["variables"]["RPS120"] == 99.0
 
 
+def test_extdata_user_slot_four_maps_to_rps20():
+    source = "原值:=EXTDATA_USER(4,0); RPS20:=原值/10; RPS20>90;"
+    bars = _trend_bars(5)
+    scaled = tdx_formula.execute_formula(
+        source, bars, rps={"rps20": [80, 85, 90, 95, 99]},
+    )
+    raw = tdx_formula.execute_formula(
+        source, bars, context={"external_data": {4: [800, 850, 900, 950, 990]}},
+    )
+
+    assert scaled["matched"] is True
+    assert raw["matched"] is True
+    assert scaled["variables"]["RPS20"] == raw["variables"]["RPS20"] == 99.0
+
+
 def test_extreme_bars_use_most_recent_tie_and_dynamic_ref():
     source = (
         "高距:=HHVBARS(H,3);低距:=LLVBARS(L,3);"
@@ -324,7 +339,7 @@ def test_not_precedence_is_below_comparison_and_context_validation_is_strict():
     assert finance_error.value.issues[0]["code"] == "unsupported_finance_field"
 
     with pytest.raises(tdx_formula.TdxFormulaSyntaxError) as external_error:
-        tdx_formula.compile_formula("EXTDATA_USER(4,0)>0;")
+        tdx_formula.compile_formula("EXTDATA_USER(5,0)>0;")
     assert external_error.value.issues[0]["code"] == "unsupported_external_data"
 
 

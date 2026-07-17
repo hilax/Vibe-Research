@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle, ChevronDown, ChevronUp, Code2, Database,
   Filter, Layers3, LoaderCircle, Pencil, Play, Plus, RefreshCw,
-  SlidersHorizontal, TrendingUp, X,
+  SlidersHorizontal, Star, TrendingUp, X, Square,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -11,10 +11,43 @@ import {
   TdxFormulaEditor, type TdxFormulaValidationState,
 } from "@/components/quant/TdxFormulaEditor";
 import {
-  ApiError, api, type TdxFormulaIssue, type TdxFormulaPreset, type QuantRow,
-  type QuantScreenResult, type QuantStrategy,
+  ApiError, api, runQuantScreenStream,
+  type TdxFormulaIssue, type TdxFormulaPreset, type QuantRow,
+  type QuantScreenResult, type QuantStrategy, type QuantStreamEvent,
+  type QuantRpsStatus,
 } from "@/lib/api";
+import { addCodes, loadWatch, saveWatch } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+
+// ── 阶段文案 + 顺序权重（用于"总体进度条"）──────────────────────────────────
+const PHASE_LABEL: Record<string, string> = {
+  validate: "校验通达信公式",
+  basepool: "构建基础池",
+  rps:      "构建全市场 RPS",
+  bars:     "下载日 K",
+  finance:  "核对财务增长率",
+  evaluate: "评估公式",
+};
+const PHASE_WEIGHT: Record<string, number> = {
+  validate: 0.5, basepool: 1, rps: 2, bars: 8, finance: 1, evaluate: 0.5,
+};
+const PHASE_ORDER = ["validate", "basepool", "rps", "bars", "finance", "evaluate"] as const;
+const TOTAL_WEIGHT = PHASE_ORDER.reduce((s, k) => s + (PHASE_WEIGHT[k] ?? 0), 0);
+
+/** 把分阶段进度折算成一个 0~100 的百分比。bars 是最大头，所以权重最大。 */
+function aggregateProgress(phase: string | null, done: number, total: number): number {
+  if (!phase) return 0;
+  let acc = 0;
+  for (const key of PHASE_ORDER) {
+    if (key === phase) {
+      const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
+      return ((acc + (PHASE_WEIGHT[key] ?? 0) * ratio) / TOTAL_WEIGHT) * 100;
+    }
+    acc += PHASE_WEIGHT[key] ?? 0;
+  }
+  return (acc / TOTAL_WEIGHT) * 100;
+}
 
 // ── 自定义策略类型 ──────────────────────────────────────────────────────────
 interface CustomStrategy {
@@ -132,6 +165,21 @@ export function QuantScreening() {
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 选股进度（来自后端 SSE 流）
+  const [progressPhase, setProgressPhase] = useState<string | null>(null);
+  const [progressDone, setProgressDone] = useState(0);
+  const [progressTotal, setProgressTotal] = useState(0);
+  const [progressMessage, setProgressMessage] = useState<string>("");
+  const [elapsed, setElapsed] = useState<number>(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // RPS 后台预热状态（轮询）
+  const [rpsStatus, setRpsStatus] = useState<QuantRpsStatus | null>(null);
+  const rpsPollAbortRef = useRef<AbortController | null>(null);
+
+  // 自选股（localStorage 同步）
+  const [watchSet, setWatchSet] = useState<Set<string>>(() => new Set(loadWatch()));
+
   // 策略数据
   const [presets, setPresets] = useState<TdxFormulaPreset[]>([]);
   const [customStrategies, setCustomStrategies] = useState<CustomStrategy[]>(() => readCustomStrategies());
@@ -200,6 +248,41 @@ export function QuantScreening() {
   useEffect(() => { saveBuiltinOverrides(builtinOverrides); }, [builtinOverrides]);
   useEffect(() => { saveHiddenBuiltins(hiddenBuiltins); }, [hiddenBuiltins]);
 
+  // ── RPS 后台预热状态轮询 ──────────────────────────────────────────────
+  // 每 10 秒拉一次状态；同时在用户主动触发预热后立即拉一次。
+  // 当页面卸载或后端连续失败时停止轮询，避免无效请求堆积。
+  useEffect(() => {
+    let active = true;
+    let consecutiveFailures = 0;
+    const ctrl = new AbortController();
+    rpsPollAbortRef.current = ctrl;
+
+    const tick = async () => {
+      if (!active) return;
+      try {
+        const data = await api.quantRpsStatus();
+        if (!active) return;
+        setRpsStatus(data);
+        consecutiveFailures = 0;
+      } catch {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 5) {
+          // 后端不可达就停止轮询，避免给页面增加噪声
+          return;
+        }
+      }
+    };
+
+    void tick();
+    const timer = window.setInterval(tick, 10_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      ctrl.abort();
+      if (rpsPollAbortRef.current === ctrl) rpsPollAbortRef.current = null;
+    };
+  }, []);
+
   // ── 统一策略列表（内置应用改名/过滤隐藏，自定义直接合并）──────────────────
   const allStrategies = useMemo<DisplayStrategy[]>(() => [
     ...presets
@@ -267,36 +350,99 @@ export function QuantScreening() {
     } finally { setValidating(false); }
   };
 
+  const cancelRun = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
+
   const run = async () => {
     if (!activeSource.trim() || !selected) {
       setError("选股公式尚未加载完成");
       return;
     }
+    // 防止并发：若已有任务在跑，按"取消旧任务"处理
+    if (loading) cancelRun();
     setLoading(true);
     setError(null);
+    setProgressPhase("validate");
+    setProgressDone(0);
+    setProgressTotal(1);
+    setProgressMessage("正在校验通达信公式…");
+    setElapsed(0);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const signal = controller.signal;
+
     try {
       setValidation({ status: "validating", message: "运行前正在校验通达信公式…" });
-      const checked = await api.validateQuantFormula(selected.baseStrategy, activeSource);
+      const checked = await api.validateQuantFormula(
+        selected.baseStrategy, activeSource, signal,
+      );
       setDrafts((cur) => ({ ...cur, [selectedKey]: checked.normalized_source }));
       setValidation({
         status: "valid",
         message: `校验通过，当前筛选使用公式版本 ${checked.formula_hash}`,
         issues: checked.issues,
       });
-      const data = await api.quantScreen({
-        strategy: selected.baseStrategy,
-        fund_ratio_min: fundRatioMin,
-        north_value_min_yi: northValueMin,
-        formula_source: checked.normalized_source,
-      });
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      const data = await runQuantScreenStream(
+        {
+          strategy: selected.baseStrategy,
+          fund_ratio_min: fundRatioMin,
+          north_value_min_yi: northValueMin,
+          formula_source: checked.normalized_source,
+        },
+        (ev: QuantStreamEvent) => {
+          if (ev.type === "progress") {
+            setProgressPhase(ev.phase);
+            setProgressDone(ev.done);
+            setProgressTotal(ev.total);
+            setProgressMessage(ev.message);
+            setElapsed(ev.elapsed);
+          } else if (ev.type === "error") {
+            // 错误最终由 runQuantScreenStream 抛 ApiError，这里仅提前显示
+            setProgressMessage(`❗ ${ev.message}`);
+          }
+        },
+        signal,
+      );
       setResult(data);
       setView("matched");
+      setProgressPhase(null);
+      setProgressMessage("");
+      setProgressDone(0);
+      setProgressTotal(0);
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : "筛选失败，请稍后重试");
-      if (reason instanceof ApiError && reason.status === 422) {
-        setValidation({ status: "invalid", message: reason.message, issues: errorIssues(reason) });
+      if ((reason as any)?.name === "AbortError") {
+        setError(null);
+        setProgressMessage("已取消");
+      } else {
+        setError(reason instanceof ApiError ? reason.message : "筛选失败，请稍后重试");
+        if (reason instanceof ApiError && reason.status === 422) {
+          setValidation({ status: "invalid", message: reason.message, issues: errorIssues(reason) });
+        }
       }
-    } finally { setLoading(false); }
+      setProgressPhase(null);
+    } finally {
+      setLoading(false);
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  };
+
+  const handleAddWatch = (codes: string[]) => {
+    if (codes.length === 0) return;
+    const current = Array.from(watchSet);
+    // 一次合并多只；用 | 分隔喂给 addCodes 的解析器即可。
+    const { next, added } = addCodes(current, codes.join("|"));
+    if (!added) {
+      toast.info("这批股票已全部在自选里");
+      return;
+    }
+    setWatchSet(new Set(next));
+    saveWatch(next);
+    toast.success(`已加入 ${added} 只到自选股（总 ${next.length} 只）`);
   };
 
   const handleSelectStrategy = (key: string) => {
@@ -395,6 +541,19 @@ export function QuantScreening() {
             <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> 重新筛选
           </button>
         )}
+      />
+
+      {/* ── RPS 后台预热状态徽章 ── */}
+      <RpsStatusBadge
+        status={rpsStatus}
+        onRefresh={async () => {
+          try {
+            const next = await api.triggerQuantRpsPrewarm();
+            setRpsStatus(next);
+          } catch (reason) {
+            toast.error(reason instanceof ApiError ? reason.message : "触发 RPS 预热失败");
+          }
+        }}
       />
 
       <GlassCard className="mb-4" glow>
@@ -727,20 +886,85 @@ export function QuantScreening() {
               ? `执行 ${selected?.label ?? "通达信公式"}（${activeSource.split(/\r?\n/).length} 行）`
               : "公式加载中…"}
           </code>
-          <button
-            data-testid="quant-run"
-            onClick={run}
-            disabled={loading || validating || formulaLoading || !activeSource.trim()}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary/15 px-5 py-2.5 text-sm font-semibold text-primary shadow-glow hover:bg-primary/25 disabled:cursor-wait disabled:opacity-60"
-          >
-            {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            {loading
-              ? selected?.baseStrategy === "near_high"
-                ? "正在拉取持仓并计算日 K…"
-                : "正在构建全市场 RPS 并执行公式…"
-              : validating ? "正在验证公式…" : "验证并开始筛选"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {loading && (
+              <button
+                type="button"
+                onClick={cancelRun}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground transition-all hover:border-destructive/40 hover:text-destructive"
+              >
+                <Square className="h-3.5 w-3.5" /> 取消
+              </button>
+            )}
+            <button
+              data-testid="quant-run"
+              onClick={run}
+              disabled={loading || validating || formulaLoading || !activeSource.trim()}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary/15 px-5 py-2.5 text-sm font-semibold text-primary shadow-glow hover:bg-primary/25 disabled:cursor-wait disabled:opacity-60"
+            >
+              {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {loading
+                ? (PHASE_LABEL[progressPhase ?? ""] ?? "执行选股")
+                : validating ? "正在验证公式…" : "验证并开始筛选"}
+            </button>
+          </div>
         </div>
+
+        {/* ── 进度条 + 阶段详情 ── */}
+        {loading && (
+          <div className="mt-3 rounded-lg border border-border/60 bg-black/20 p-3">
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" />
+                <span className="font-medium text-foreground">
+                  {PHASE_LABEL[progressPhase ?? ""] ?? "准备中…"}
+                </span>
+                {progressTotal > 0 && progressPhase !== "validate" && (
+                  <span className="font-mono text-primary/80">
+                    {progressDone}/{progressTotal}
+                  </span>
+                )}
+              </div>
+              <span className="font-mono text-muted-foreground">
+                已运行 {elapsed.toFixed(1)}s
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-border/40">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary transition-all duration-300 ease-out"
+                style={{ width: `${aggregateProgress(progressPhase, progressDone, progressTotal).toFixed(1)}%` }}
+              />
+            </div>
+            {progressMessage && (
+              <p className="mt-1.5 break-all text-[11px] text-muted-foreground">
+                {progressMessage}
+              </p>
+            )}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {PHASE_ORDER.map((key) => {
+                const isActive = key === progressPhase;
+                const idxActive = progressPhase ? PHASE_ORDER.indexOf(progressPhase as typeof PHASE_ORDER[number]) : -1;
+                const idxKey = PHASE_ORDER.indexOf(key);
+                const isDone = idxActive >= 0 && idxKey < idxActive;
+                return (
+                  <span
+                    key={key}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] transition-colors",
+                      isActive
+                        ? "bg-primary/20 text-primary"
+                        : isDone
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : "bg-border/40 text-muted-foreground/60",
+                    )}
+                  >
+                    {PHASE_LABEL[key]}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </GlassCard>
 
       {error && (
@@ -778,7 +1002,7 @@ export function QuantScreening() {
             <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">全市场 RPS 快照：</span>
               {result.rps_meta.trade_date}，沪深 A 股 {result.rps_meta.universe_count} 只；剔除上市未满一年/日 K 不足的 {result.rps_meta.excluded_short_history_count} 只，
-              最终 {result.rps_meta.eligible_count} 只按同一股票池计算 RPS50 / RPS120 / RPS250。
+              最终 {result.rps_meta.eligible_count} 只按同一股票池计算 RPS20 / RPS50 / RPS120 / RPS250。
             </div>
           )}
 
@@ -803,19 +1027,33 @@ export function QuantScreening() {
                   </p>
                 )}
               </div>
-              <div className="flex rounded-lg bg-black/20 p-1 text-xs">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setView("matched")}
-                  className={cn("rounded-md px-3 py-1.5", view === "matched" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
+                  type="button"
+                  onClick={() => {
+                    const codes = rows.map((r) => r.code).filter((c) => !watchSet.has(c));
+                    handleAddWatch(codes);
+                  }}
+                  disabled={!rows.some((r) => !watchSet.has(r.code))}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border/40 disabled:bg-black/20 disabled:text-muted-foreground"
+                  title="把当前列表中未加入自选的股票一次性加入"
                 >
-                  技术命中 {result.matched_count}
+                  <Star className="h-3.5 w-3.5" /> 全部加入自选
                 </button>
-                <button
-                  onClick={() => setView("base")}
-                  className={cn("rounded-md px-3 py-1.5", view === "base" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
-                >
-                  基础池 {result.base_count}
-                </button>
+                <div className="flex rounded-lg bg-black/20 p-1 text-xs">
+                  <button
+                    onClick={() => setView("matched")}
+                    className={cn("rounded-md px-3 py-1.5", view === "matched" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
+                  >
+                    技术命中 {result.matched_count}
+                  </button>
+                  <button
+                    onClick={() => setView("base")}
+                    className={cn("rounded-md px-3 py-1.5", view === "base" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
+                  >
+                    基础池 {result.base_count}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -828,9 +1066,9 @@ export function QuantScreening() {
                     <tr className="border-b border-border/60 text-left text-[11px] text-muted-foreground">
                       {[
                         "名称 / 代码", "入池条件", "行业", "基金占流通股", "基金家数", "基金持有市值", "北向持有市值", "北向占A股",
-                        ...(usesRps ? ["RPS50", "RPS120", "RPS250"] : []),
+                        ...(usesRps ? ["RPS20", "RPS50", "RPS120", "RPS250"] : []),
                         ...(isGrowth ? ["换手率", "营收同比", "净利同比"] : []),
-                        "最新收盘", "一年最高", "距新高", ...(usesRps ? ["公式分支"] : []), "K线日期",
+                        "最新收盘", "一年最高", "距新高", ...(usesRps ? ["公式分支"] : []), "K线日期", "操作",
                       ].map((heading) => (
                         <th key={heading} className="whitespace-nowrap px-3 py-2.5 font-medium">{heading}</th>
                       ))}
@@ -852,6 +1090,7 @@ export function QuantScreening() {
                         <td className="px-3 py-2.5 font-mono">{numberText(row.north_total_ratio_pct)}%</td>
                         {usesRps && (
                           <>
+                            <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps20)}</td>
                             <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps50)}</td>
                             <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps120)}</td>
                             <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps250)}</td>
@@ -869,6 +1108,22 @@ export function QuantScreening() {
                         <td className="px-3 py-2.5 font-mono text-primary">{row.distance_to_high_pct == null ? "—" : `${numberText(row.distance_to_high_pct, 2)}%`}</td>
                         {usesRps && <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{row.strategy_detail || "—"}</td>}
                         <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">{row.technical_date || "—"}</td>
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          {watchSet.has(row.code) ? (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2 py-1 text-[11px] text-primary">
+                              <Star className="h-3.5 w-3.5 fill-current" /> 已加入
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleAddWatch([row.code])}
+                              className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-[11px] text-muted-foreground transition hover:border-primary/60 hover:text-primary"
+                              title={`将 ${row.code} 加入自选股`}
+                            >
+                              <Star className="h-3.5 w-3.5" /> 加自选
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -888,6 +1143,70 @@ export function QuantScreening() {
       )}
 
       <Disclaimer />
+    </div>
+  );
+}
+
+// ── RPS 后台预热状态徽章 ─────────────────────────────────────────────────
+// 展示当前 RPS 快照是否就绪；不可用时降级隐藏，避免给页面增加噪声。
+// 颜色语义：
+//   ready  = 绿：全市场 RPS 已就绪 → 选股会秒回
+//   running= 蓝：正在后台预热 → 选股会等待一小段时间
+//   error  = 红：上次预热失败 → 选股会降级到即时计算（会慢）
+//   idle   = 灰：后端没启预热（VR_RPS_PREWARM=0）→ 选股走懒加载
+function RpsStatusBadge({
+  status, onRefresh,
+}: { status: QuantRpsStatus | null; onRefresh: () => void }) {
+  if (!status) return null; // 还在拉，没拿到就不显示
+
+  let tone: string;
+  let icon: ReactNode;
+  let label: string;
+  let detail: string;
+
+  if (status.ready) {
+    tone = "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    icon = <TrendingUp className="h-3.5 w-3.5" />;
+    label = "RPS 快照已就绪";
+    detail = status.trade_date
+      ? `${status.trade_date} · 选股将秒回`
+      : "选股将秒回";
+  } else if (status.running) {
+    tone = "border-sky-500/30 bg-sky-500/10 text-sky-300";
+    icon = <LoaderCircle className="h-3.5 w-3.5 animate-spin" />;
+    label = "RPS 后台预热中…";
+    detail = "新交易日首次构建全市场快照，请稍候";
+  } else if (status.last_error) {
+    tone = "border-destructive/30 bg-destructive/10 text-destructive";
+    icon = <AlertTriangle className="h-3.5 w-3.5" />;
+    label = "RPS 后台预热失败";
+    detail = "选股将降级到即时计算（较慢），可点此重试";
+  } else {
+    tone = "border-border bg-black/20 text-muted-foreground";
+    icon = <Database className="h-3.5 w-3.5" />;
+    label = "RPS 后台预热未启用";
+    detail = "选股首次会即时计算全市场快照";
+  }
+
+  return (
+    <div className={cn(
+      "mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs",
+      tone,
+    )}>
+      <div className="flex items-center gap-2">
+        {icon}
+        <span className="font-medium">{label}</span>
+        <span className="opacity-70">{detail}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onRefresh}
+        disabled={status.running}
+        className="inline-flex items-center gap-1 rounded-md border border-current/30 px-2 py-0.5 text-[11px] opacity-80 transition-opacity hover:opacity-100 disabled:cursor-wait disabled:opacity-40"
+      >
+        <RefreshCw className={cn("h-3 w-3", status.running && "animate-spin")} />
+        {status.last_error ? "重试" : "手动预热"}
+      </button>
     </div>
   );
 }

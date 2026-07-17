@@ -528,11 +528,11 @@ def _walk_validate(expression: Expr, defined: set[str], used_functions: set[str]
         if name == "EXTDATA_USER":
             slot, data_type = expression.arguments
             if not (
-                isinstance(slot, Literal) and slot.value in {1.0, 2.0, 3.0}
+                isinstance(slot, Literal) and slot.value in {1.0, 2.0, 3.0, 4.0}
                 and isinstance(data_type, Literal) and data_type.value == 0.0
             ):
                 raise TdxFormulaSyntaxError(
-                    "EXTDATA_USER 仅支持 (1|2|3, 0)，分别对应 RPS120/250/50",
+                    "EXTDATA_USER 仅支持 (1|2|3|4, 0)，分别对应 RPS120/250/50/20",
                     code="unsupported_external_data",
                     line=expression.line,
                     column=expression.column,
@@ -1256,6 +1256,7 @@ class _Evaluator:
             1: ("1", "RPS120", "RPS_120"),
             2: ("2", "RPS250", "RPS_250"),
             3: ("3", "RPS50", "RPS_50"),
+            4: ("4", "RPS20", "RPS_20"),
         }
         for index, slot_value in enumerate(slots):
             slot_number = _finite_number(slot_value)

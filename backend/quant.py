@@ -35,17 +35,150 @@ _HEADERS = {
 }
 _CACHE: dict[tuple, tuple[float, Any]] = {}
 _CACHE_LOCK = threading.RLock()
-_BASE_TTL = 6 * 3600
+# 基础池（基金/北向）数据按季度披露；缓存 24h 既能复用，又能在新报告日失效。
+# 之前的 6h 太短，会反复拉东方财富/港交所接口，导致每次筛选都慢。
+_BASE_TTL = 24 * 3600
 _THREAD_LOCAL = threading.local()
 _RPS_CACHE_DIR = Path(__file__).with_name(".cache")
-_RPS_VERSION = 2
-_RPS_PERIODS = (50, 120, 250)
+_RPS_VERSION = 3
+_RPS_PERIODS = (20, 50, 120, 250)
 _RPS_HISTORY_DAYS = 20
 _STRATEGIES = {
     "near_high": "接近一年新高",
     "monthly_reversal_62": "月线反转 6.2",
     "growth_mrgc_sxhcg": "RPS 高成长（MRGC / SXHCG）",
 }
+
+# ── RPS 后台预热状态 ──────────────────────────────────────────────────────
+# 目标：让前端发起选股请求时，rps_snapshot() 总是命中内存热缓存，
+# 把"几千只股 × 网络请求"的耗时从用户等待时间里彻底移除。
+# 状态用 dict（dict 取/赋值原子） + 写时加锁；读取用快照避免阻塞。
+_RPS_PREWARM_STATE: dict[str, Any] = {
+    "ready": False,             # 当日快照是否就绪
+    "trade_date": None,         # 当前就绪快照对应的交易日
+    "started_at": None,         # 最近一次预热开始时间
+    "finished_at": None,        # 最近一次预热成功结束时间
+    "last_error": None,         # 最近一次预热失败的错误信息
+    "running": False,           # 当前是否正在跑预热
+    "runs_total": 0,            # 累计预热次数
+    "runs_failed": 0,           # 累计失败次数
+}
+_RPS_PREWARM_LOCK = threading.Lock()
+
+
+def get_rps_prewarm_status() -> dict:
+    """读取 RPS 预热状态（不阻塞、不加锁；返回 dict 副本）。"""
+    with _RPS_PREWARM_LOCK:
+        return dict(_RPS_PREWARM_STATE)
+
+
+def _set_rps_prewarm(**kwargs) -> None:
+    with _RPS_PREWARM_LOCK:
+        _RPS_PREWARM_STATE.update(kwargs)
+
+
+def _prewarm_rps_sync() -> None:
+    """后台线程执行：预热当日 RPS 快照。
+
+    设计要点：
+    1. 失败绝不抛出；状态写错误信息方便前端排查。
+    2. 若内存已就绪（同交易日），跳过重复计算。
+    3. 完成后磁盘 + 内存双层缓存，下一次 rps_snapshot() 同步读取 O(1) 返回。
+    """
+    _set_rps_prewarm(running=True, started_at=time.time(), last_error=None)
+    try:
+        # 在调用 rps_snapshot() 之前先看 trade_date —— 它本身会拉一次 mootdx，
+        # 但已经在 _latest_tdx_date() 内部做了客户端复用，开销可接受。
+        snapshot = rps_snapshot()
+        _set_rps_prewarm(
+            ready=True,
+            trade_date=snapshot.get("trade_date"),
+            finished_at=time.time(),
+            running=False,
+            runs_total=_RPS_PREWARM_STATE["runs_total"] + 1,
+        )
+    except Exception as error:  # noqa: BLE001 — 后台任务不能崩
+        _set_rps_prewarm(
+            running=False,
+            last_error=f"{type(error).__name__}: {error}",
+            runs_failed=_RPS_PREWARM_STATE["runs_failed"] + 1,
+        )
+
+
+def trigger_rps_prewarm() -> threading.Thread | None:
+    """触发一次预热；如已在跑则直接返回。返回启动的线程（可能为 None）。"""
+    with _RPS_PREWARM_LOCK:
+        if _RPS_PREWARM_STATE["running"]:
+            return None
+    thread = threading.Thread(
+        target=_prewarm_rps_sync, name="rps-prewarm", daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+# ── RPS 预热调度器 ────────────────────────────────────────────────────────
+# 默认在 9:00 / 15:30 / 16:30 三个时间点各触发一次，覆盖：
+#  - 开盘前：清缓存 + 准备新一日快照
+#  - 收盘后 15:30 第一次：等交易所数据稳定
+#  - 收盘后 16:30 第二次：兜底（万一前一次失败 / 上游延迟）
+# 可通过环境变量 VR_RPS_PREWARM_TIMES="9:00,15:30,16:30" 自定义。
+def _parse_prewarm_times(spec: str) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            hh, mm = token.split(":", 1)
+            out.append((int(hh), int(mm)))
+        except (ValueError, AttributeError):
+            continue
+    return out
+
+
+def _seconds_until_next(target_hh: int, target_mm: int) -> float:
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    target = now.replace(hour=target_hh, minute=target_mm, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def start_rps_prewarm_scheduler(
+    prewarm_times: str | None = None,
+    prewarm_on_start: bool = True,
+) -> None:
+    """启动 RPS 后台预热调度器。
+
+    - prewarm_times: "HH:MM,HH:MM,..."；为空则用默认值。
+    - prewarm_on_start: 启动后是否立刻预热一次（不阻塞启动）。
+    """
+    times = _parse_prewarm_times(
+        prewarm_times or os.environ.get("VR_RPS_PREWARM_TIMES", "9:00,15:30,16:30"),
+    )
+    if not times:
+        times = [(9, 0), (15, 30), (16, 30)]
+
+    def loop():
+        # 启动时立刻预热一次（不阻塞主流程）
+        if prewarm_on_start:
+            trigger_rps_prewarm()
+        while True:
+            # 找到下一个最近的时刻
+            now = time.time()
+            waits = [(_seconds_until_next(hh, mm), hh, mm) for hh, mm in times]
+            wait, hh, mm = min(waits, key=lambda x: x[0])
+            # 最多睡 1 小时醒来再算一次（防止时钟漂移 / 系统休眠后错过）
+            sleep_chunk = min(wait, 3600)
+            time.sleep(max(1.0, sleep_chunk))
+            # 如果我们已经跨过目标时刻就触发
+            from datetime import datetime as _dt
+            if _dt.now().hour == hh and _dt.now().minute == mm:
+                trigger_rps_prewarm()
+
+    threading.Thread(target=loop, name="rps-prewarm-scheduler", daemon=True).start()
 
 
 class QuantDataError(RuntimeError):
@@ -563,6 +696,7 @@ def rps_snapshot() -> dict:
             code = item["code"]
             historical_ranks.setdefault(code, []).append({
                 "trade_date": point_date,
+                "rps20": date_rank_maps[20][code],
                 "rps50": date_rank_maps[50][code],
                 "rps120": date_rank_maps[120][code],
                 "rps250": date_rank_maps[250][code],
@@ -572,9 +706,11 @@ def rps_snapshot() -> dict:
         code = item["code"]
         stocks[code] = {
             "name": item["name"],
+            "rps20": rank_maps[20][code],
             "rps50": rank_maps[50][code],
             "rps120": rank_maps[120][code],
             "rps250": rank_maps[250][code],
+            "return20_pct": round(item["returns"][20] * 100, 3),
             "return50_pct": round(item["returns"][50] * 100, 3),
             "return120_pct": round(item["returns"][120] * 100, 3),
             "return250_pct": round(item["returns"][250] * 100, 3),
@@ -587,7 +723,7 @@ def rps_snapshot() -> dict:
         "eligible_count": len(histories),
         "excluded_short_history_count": len(universe) - len(histories),
         "rule": (
-            "沪深A股统一剔除不足251根日K的上市一年内新股，再计算RPS50/120/250；"
+            "沪深A股统一剔除不足251根日K的上市一年内新股，再计算RPS20/50/120/250；"
             f"同时保留最近{_RPS_HISTORY_DAYS}个交易日RPS供通达信历史函数使用"
         ),
         "stocks": stocks,
@@ -1200,7 +1336,7 @@ def _tdx_rps_for_bars(rps: dict | None, bars: list[dict]) -> dict | None:
         return rps
     history = {item.get("trade_date"): item for item in rps["history"]}
     result: dict[str, list[float | None]] = {
-        "rps50": [], "rps120": [], "rps250": [],
+        "rps20": [], "rps50": [], "rps120": [], "rps250": [],
     }
     for bar in bars:
         trade_date = str(bar.get("datetime") or bar.get("date") or "")[:10]
@@ -1257,7 +1393,25 @@ def _run_screen_tdx(
     fund_period: str | None,
     strategy: str,
     formula_source: str | None,
+    progress_cb=None,
 ) -> dict:
+    """执行通达信版量化筛选。
+
+    ``progress_cb`` 为可选回调，签名 ``progress_cb(phase, done, total, message)``。
+    目前分四阶段推送：
+      - "basepool"：基金/北向基础池构建
+      - "rps"     ：全市场 RPS 快照（仅当公式使用 RPS 函数）
+      - "bars"    ：基础池逐股日 K 下载（最大头）
+      - "finance" ：财务增长率二次校验（仅当公式使用 FINANCE 时）
+    """
+    def _emit(phase: str, done: int, total: int, message: str = "") -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(phase, done, total, message)
+        except Exception:  # noqa: BLE001 — 进度回调出错不影响选股
+            pass
+
     if strategy not in _STRATEGIES:
         raise ValueError(f"不支持的量化策略：{strategy}")
     preset = tdx_presets.get_preset(strategy)
@@ -1270,8 +1424,42 @@ def _run_screen_tdx(
     uses_capital = bool(re.search(r"(?<![A-Z0-9_])CAPITAL(?![A-Z0-9_])", source_upper))
 
     started = time.perf_counter()
+    _emit("basepool", 0, 1, "正在拉取基金/北向基础池…")
     base = base_pool(fund_ratio_min, north_value_min_yi, fund_period)
-    rps_data = rps_snapshot() if program.uses_rps else None
+    _emit("basepool", 1, 1, f"基础池命中 {base['base_count']} 只")
+
+    rps_data: dict | None = None
+    if program.uses_rps:
+        # 优先使用后台预热的快照；若还没就绪，触发预热 + 等待一段时间（最多 5 分钟）
+        _emit("rps", 0, 1, "正在等待 RPS 快照就绪…")
+        prewarm = get_rps_prewarm_status()
+        if not prewarm.get("ready"):
+            trigger_rps_prewarm()
+            deadline = time.time() + 5 * 60
+            last_msg_at = 0.0
+            while time.time() < deadline:
+                cur = get_rps_prewarm_status()
+                if cur.get("last_error") and not cur.get("ready"):
+                    # 预热失败：降级走懒加载
+                    _emit("rps", 0, 1, f"后台预热失败（{cur['last_error']}），切换到即时计算…")
+                    break
+                if cur.get("running"):
+                    now = time.time()
+                    if now - last_msg_at > 1.0:
+                        elapsed = (now - (cur.get("started_at") or now))
+                        _emit("rps", 0, 1, f"等待后台 RPS 预热（已 {elapsed:.0f}s）…")
+                        last_msg_at = now
+                    time.sleep(0.5)
+                    continue
+                # 没在跑、也没失败 —— 可能是上次失败/没排到；再触发一次兜底
+                if not cur.get("ready"):
+                    trigger_rps_prewarm()
+                else:
+                    break
+
+        _emit("rps", 0, 1, "正在构建全市场 RPS 快照…")
+        rps_data = rps_snapshot()
+        _emit("rps", 1, 1, f"RPS 快照完成（{rps_data['eligible_count']} 只）")
     rps_by_code = rps_data["stocks"] if rps_data else {}
     quotes = (
         _batch_quotes([row["code"] for row in base["rows"]])
@@ -1299,6 +1487,9 @@ def _run_screen_tdx(
         prepared.append((row, rps))
 
     workers = max(2, min(12, int(os.environ.get("VR_SCREEN_WORKERS", "8"))))
+    total_bars = len(prepared)
+    done_bars = 0
+    _emit("bars", 0, total_bars, f"开始下载 {total_bars} 只个股的日 K…")
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(_daily_bar_records, row["code"], fetch_history): (row, rps)
@@ -1306,6 +1497,10 @@ def _run_screen_tdx(
         }
         for future in as_completed(futures):
             row, rps = futures[future]
+            done_bars += 1
+            # 每完成一只都推一次，便于前端细粒度更新；前端自己节流到 ~100ms。
+            if done_bars == total_bars or done_bars % max(1, total_bars // 50) == 0:
+                _emit("bars", done_bars, total_bars, f"日 K {done_bars}/{total_bars}")
             try:
                 bars = future.result()
                 if len(bars) < minimum_history:
@@ -1359,6 +1554,9 @@ def _run_screen_tdx(
             base_rows.append(row)
 
     if financial_candidates:
+        total_finance = len(financial_candidates)
+        done_finance = 0
+        _emit("finance", 0, total_finance, f"开始核对 {total_finance} 只候选的财务增长率…")
         finance_workers = min(6, len(financial_candidates))
         with ThreadPoolExecutor(max_workers=finance_workers) as executor:
             futures = {
@@ -1367,6 +1565,9 @@ def _run_screen_tdx(
             }
             for future in as_completed(futures):
                 row, bars, rps, capital = futures[future]
+                done_finance += 1
+                if done_finance == total_finance or done_finance % max(1, total_finance // 20) == 0:
+                    _emit("finance", done_finance, total_finance, f"财务 {done_finance}/{total_finance}")
                 try:
                     financial = future.result()
                     row.update(financial)
@@ -1456,11 +1657,13 @@ def run_screen(
     strategy: str = "near_high",
     formula: dict | None = None,
     formula_source: str | None = None,
+    progress_cb=None,
 ) -> dict:
     """执行量化筛选。
 
     ``formula_source`` 是当前页面使用的通达信兼容源码；旧版结构化 ``formula``
     仍保留兼容，避免已有调用方突然失效。
+    ``progress_cb`` 是可选的进度回调，签名 ``progress_cb(phase, done, total, message)``。
     """
     if formula is not None and formula_source is None:
         return _run_screen_named_signals(
@@ -1478,4 +1681,5 @@ def run_screen(
         fund_period=fund_period,
         strategy=strategy,
         formula_source=formula_source,
+        progress_cb=progress_cb,
     )

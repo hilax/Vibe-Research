@@ -37,6 +37,12 @@ app = FastAPI(title="Vibe-Research API", version="0.1.3")
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
 
+# 后台预热 RPS 全市场快照，让选股请求进来时永远命中热缓存。
+# 默认 9:00 / 15:30 / 16:30 各触发一次；启动时也立刻跑一次。
+# VR_RPS_PREWARM_TIMES="HH:MM,..." 自定义；VR_RPS_PREWARM=0 可关闭。
+if os.environ.get("VR_RPS_PREWARM", "1") != "0":
+    quant.start_rps_prewarm_scheduler()
+
 # CORS：默认放开（本地自托管友好）；公网部署时用 VR_ALLOW_ORIGINS 收紧成白名单。
 #   例：VR_ALLOW_ORIGINS="https://myhost"  （逗号分隔多个）
 _ORIGINS = [o.strip() for o in os.environ.get("VR_ALLOW_ORIGINS", "*").split(",") if o.strip()] or ["*"]
@@ -118,6 +124,19 @@ def _tdx_formula_validation_detail(error: tdx_formula.TdxFormulaError) -> dict:
 @app.get("/api/quant/formulas")
 def quant_formulas():
     """返回可直接复制/粘贴的通达信源码预设，并保留旧版参数描述兼容。"""
+
+
+@app.get("/api/quant/rps/status")
+def quant_rps_status():
+    """返回 RPS 后台预热状态。前端轮询或初始化时调用，决定是否走"等待预热"分支。"""
+    return {"data": quant.get_rps_prewarm_status()}
+
+
+@app.post("/api/quant/rps/prewarm")
+def quant_rps_trigger_prewarm():
+    """手动触发一次预热（如用户觉得数据过期）。后端去重，重复触发返回 running=True。"""
+    thread = quant.trigger_rps_prewarm()
+    return {"data": {"triggered": thread is not None, **quant.get_rps_prewarm_status()}}
     legacy = {item["strategy"]: item for item in quant_formula.strategy_presets()}
     items = []
     for item in tdx_presets.strategy_presets():
@@ -199,6 +218,148 @@ def quant_screen(req: QuantScreenReq):
         raise HTTPException(502, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"量化选股异常：{e}") from e
+
+
+# ── 异步进度流式接口 ────────────────────────────────────────────────────────
+# 设计：保留旧 /api/quant/screen 同步接口不变（兼容性），新前端使用 start + stream。
+# - POST /api/quant/screen/start  → 立即返回 {job_id}，后端起后台线程跑选股。
+# - GET  /api/quant/screen/{job_id}/stream  → NDJSON 流：
+#     {type:"progress", phase, done, total, message, elapsed}
+#     {type:"result",   data:{...与旧接口 data 字段一致...}}
+#     {type:"error",    message}
+#     {type:"done"}
+import threading
+import queue
+import uuid
+from typing import Any
+
+_SCREEN_JOBS: dict[str, dict[str, Any]] = {}
+_SCREEN_JOBS_LOCK = threading.Lock()
+_SCREEN_JOB_TTL = 60 * 30  # 任务记录保留 30 分钟，便于前端断线重连复盘
+
+
+class _QuantScreenJob:
+    """单个异步选股任务：参数、事件队列、结果、状态。"""
+
+    __slots__ = ("params", "events", "result", "error", "done", "started_at", "thread")
+
+    def __init__(self, params: dict):
+        self.params = params
+        self.events: queue.Queue = queue.Queue(maxsize=1024)
+        self.result: dict | None = None
+        self.error: dict | None = None
+        self.done = False
+        self.started_at = time_module.time()
+        self.thread: threading.Thread | None = None
+
+    def push(self, event: dict) -> None:
+        # 阻塞放行：选股主线程不要被反压拖慢
+        try:
+            self.events.put_nowait(event)
+        except queue.Full:
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.events.put_nowait(event)
+            except queue.Full:
+                pass
+
+
+import time as time_module  # noqa: E402 — 局部导入避免与上方冲突
+
+
+def _run_screen_job(job_id: str, req: QuantScreenReq) -> None:
+    """后台线程：跑选股 + 通过 job.events 推送进度。"""
+    job = _SCREEN_JOBS.get(job_id)
+    if job is None:
+        return
+
+    def progress(phase: str, done: int, total: int, message: str) -> None:
+        job.push({
+            "type": "progress",
+            "phase": phase,
+            "done": int(done),
+            "total": int(total),
+            "message": message or "",
+            "elapsed": round(time_module.time() - job.started_at, 2),
+        })
+
+    try:
+        progress("validate", 0, 1, "正在校验通达信公式…")
+        params = req.model_dump()
+        # 进度回调只对 tdx 路径生效，旧 named_signals 没有内部进度，整体当 1 步推。
+        result = quant.run_screen(progress_cb=progress, **params)
+        job.result = result
+        job.push({"type": "result", "data": result})
+    except tdx_formula.TdxFormulaError as e:
+        job.error = {"code": "tdx_formula_validation_error", "message": str(e), "issues": getattr(e, "issues", [])}
+        job.push({"type": "error", **job.error})
+    except quant_formula.FormulaValidationError as e:
+        job.error = {"code": "formula_validation_error", "message": str(e), "issues": getattr(e, "issues", [])}
+        job.push({"type": "error", **job.error})
+    except astock.DependencyMissing as e:
+        job.error = {"code": "dependency_missing", "message": str(e)}
+        job.push({"type": "error", **job.error})
+    except quant.QuantDataError as e:
+        job.error = {"code": "data_error", "message": str(e)}
+        job.push({"type": "error", **job.error})
+    except Exception as e:  # noqa: BLE001
+        job.error = {"code": "internal", "message": f"量化选股异常：{e}"}
+        job.push({"type": "error", **job.error})
+    finally:
+        job.done = True
+        job.push({"type": "done"})
+
+
+def _gc_screen_jobs() -> None:
+    """清理超时的任务记录，避免长期内存泄漏。"""
+    now = time_module.time()
+    with _SCREEN_JOBS_LOCK:
+        stale = [jid for jid, job in _SCREEN_JOBS.items() if now - job.started_at > _SCREEN_JOB_TTL]
+        for jid in stale:
+            _SCREEN_JOBS.pop(jid, None)
+
+
+@app.post("/api/quant/screen/start")
+def quant_screen_start(req: QuantScreenReq):
+    """启动异步选股，立即返回 job_id。前端随后通过 stream 端点拉取进度。"""
+    _gc_screen_jobs()
+    job_id = uuid.uuid4().hex
+    job = _QuantScreenJob(req.model_dump())
+    with _SCREEN_JOBS_LOCK:
+        _SCREEN_JOBS[job_id] = job
+    thread = threading.Thread(
+        target=_run_screen_job, args=(job_id, req), name=f"quant-screen-{job_id[:6]}", daemon=True,
+    )
+    job.thread = thread
+    thread.start()
+    return {"data": {"job_id": job_id, "started_at": job.started_at}}
+
+
+@app.get("/api/quant/screen/{job_id}/stream")
+def quant_screen_stream(job_id: str, request: Request):
+    """以 NDJSON 流推送 job_id 对应任务的进度与最终结果。"""
+    with _SCREEN_JOBS_LOCK:
+        job = _SCREEN_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job_id 不存在或已过期")
+
+    def gen():
+        # 客户端断开检测
+        while True:
+            try:
+                event = job.events.get(timeout=15)
+            except queue.Empty:
+                # 心跳：防止中间代理/浏览器读超时
+                yield json.dumps({"type": "heartbeat"}) + "\n"
+                continue
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+            if event.get("type") in ("done",):
+                break
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 class LLMConfig(BaseModel):

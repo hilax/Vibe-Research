@@ -110,14 +110,15 @@ def test_rps_history_is_aligned_to_bar_dates():
     bars = _bars(3)
     dates = [str(bar["datetime"])[:10] for bar in bars]
     rps = {
-        "rps50": 99, "rps120": 98, "rps250": 97,
+        "rps20": 96, "rps50": 99, "rps120": 98, "rps250": 97,
         "history": [
-            {"trade_date": dates[1], "rps50": 80, "rps120": 81, "rps250": 82},
-            {"trade_date": dates[2], "rps50": 90, "rps120": 91, "rps250": 92},
+            {"trade_date": dates[1], "rps20": 70, "rps50": 80, "rps120": 81, "rps250": 82},
+            {"trade_date": dates[2], "rps20": 79, "rps50": 90, "rps120": 91, "rps250": 92},
         ],
     }
     aligned = quant._tdx_rps_for_bars(rps, bars)
     assert aligned == {
+        "rps20": [None, 70.0, 79.0],
         "rps50": [None, 80.0, 90.0],
         "rps120": [None, 81.0, 91.0],
         "rps250": [None, 82.0, 92.0],

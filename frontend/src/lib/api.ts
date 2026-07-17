@@ -51,7 +51,7 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
+async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
   const opts: RequestInit = { method };
@@ -59,10 +59,12 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
+  if (signal) opts.signal = signal;
   if (Object.keys(headers).length > 0) opts.headers = headers;
   try {
     resp = await fetch(`/api${path}`, opts);
-  } catch {
+  } catch (reason) {
+    if ((reason as any)?.name === "AbortError") throw reason;
     throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
   }
   let payload: any = null;
@@ -85,6 +87,107 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
 }
 
 const get = <T>(path: string) => request<T>(path, "GET");
+
+// ── NDJSON 流式消费工具：把 fetch 的 ReadableStream 解析成按行事件 ───────────
+async function* iterateNdjson(
+  resp: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<unknown> {
+  if (!resp.body) {
+    throw new ApiError("后端未返回流式数据", resp.status || 502);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        try { reader.cancel(); } catch { /* noop */ }
+        return;
+      }
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIdx = buffer.indexOf("\n");
+      while (newlineIdx >= 0) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+        if (line) {
+          try { yield JSON.parse(line); }
+          catch { /* 忽略坏行 */ }
+        }
+        newlineIdx = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) {
+      try { yield JSON.parse(buffer.trim()); }
+      catch { /* 忽略 */ }
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* noop */ }
+  }
+}
+
+/** 启动异步选股，立即返回 job_id。 */
+async function startQuantScreen(
+  input: QuantScreenInput,
+  signal?: AbortSignal,
+): Promise<{ job_id: string; started_at: number }> {
+  const started = await request<{ job_id: string; started_at: number }>(
+    "/quant/screen/start", "POST", input, signal,
+  );
+  return started;
+}
+
+/**
+ * 流式拉取选股进度。每解析一行 NDJSON 就调用 onEvent 回调，
+ * 返回最终的 QuantScreenResult（或抛出 ApiError）。
+ */
+export async function runQuantScreenStream(
+  input: QuantScreenInput,
+  onEvent: (ev: QuantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<QuantScreenResult> {
+  const { job_id } = await startQuantScreen(input, signal);
+  const headers: Record<string, string> = { ...authHeaders() };
+  let resp: Response;
+  try {
+    resp = await fetch(`/api/quant/screen/${job_id}/stream`, {
+      method: "GET",
+      headers,
+      signal,
+    });
+  } catch (reason) {
+    if ((reason as any)?.name === "AbortError") throw reason;
+    throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
+  }
+  if (!resp.ok) {
+    let detail: any = null;
+    try { detail = await resp.json(); } catch { /* noop */ }
+    const msg = detail?.detail?.message || detail?.detail || `HTTP ${resp.status}`;
+    throw new ApiError(typeof msg === "string" ? msg : JSON.stringify(msg), resp.status, detail?.detail);
+  }
+
+  let result: QuantScreenResult | null = null;
+  let firstError: ApiError | null = null;
+
+  for await (const raw of iterateNdjson(resp, signal)) {
+    const ev = raw as QuantStreamEvent;
+    if (!ev || typeof ev !== "object") continue;
+    onEvent(ev);
+    if (ev.type === "result") {
+      result = ev.data;
+    } else if (ev.type === "error" && firstError === null) {
+      firstError = new ApiError(ev.message, 422, ev.issues);
+    } else if (ev.type === "done") {
+      break;
+    }
+  }
+
+  if (result) return result;
+  if (firstError) throw firstError;
+  throw new ApiError("选股任务未返回结果", 502);
+}
 
 export interface Quote {
   name: string; price: number; last_close: number; change_pct: number;
@@ -256,8 +359,8 @@ export interface QuantRow {
   fund_condition_met?: boolean; north_condition_met?: boolean; condition_tags?: string[];
   close?: number; year_high?: number; distance_to_high_pct?: number;
   history_days?: number; technical_date?: string | null;
-  rps50?: number; rps120?: number; rps250?: number;
-  return50_pct?: number; return120_pct?: number; return250_pct?: number;
+  rps20?: number; rps50?: number; rps120?: number; rps250?: number;
+  return20_pct?: number; return50_pct?: number; return120_pct?: number; return250_pct?: number;
   turnover_pct?: number | null; drawdown120_pct?: number;
   strategy_detail?: string; matched?: boolean;
   signal_results?: Record<string, boolean>;
@@ -284,6 +387,48 @@ export interface QuantScreenResult {
   };
   base_rows: QuantRow[]; rows: QuantRow[];
 }
+
+// ── 选股进度流（NDJSON） ───────────────────────────────────────────────────
+export type QuantPhase =
+  | "validate" | "basepool" | "rps" | "bars" | "finance" | "evaluate";
+
+// ── 后台 RPS 预热状态 ──────────────────────────────────────────────────────
+export interface QuantRpsStatus {
+  ready: boolean;
+  trade_date: string | null;
+  started_at: number | null;
+  finished_at: number | null;
+  last_error: string | null;
+  running: boolean;
+  runs_total: number;
+  runs_failed: number;
+}
+
+export interface QuantProgressEvent {
+  type: "progress";
+  phase: QuantPhase;
+  done: number;
+  total: number;
+  message: string;
+  elapsed: number;
+}
+
+export interface QuantResultEvent { type: "result"; data: QuantScreenResult; }
+export interface QuantErrorEvent {
+  type: "error";
+  code?: string;
+  message: string;
+  issues?: unknown;
+}
+export interface QuantDoneEvent { type: "done"; }
+export interface QuantHeartbeatEvent { type: "heartbeat"; }
+
+export type QuantStreamEvent =
+  | QuantProgressEvent
+  | QuantResultEvent
+  | QuantErrorEvent
+  | QuantDoneEvent
+  | QuantHeartbeatEvent;
 
 // 全球市场（美股 / 港股，移植自 global-stock-data · 东财域内源）
 export interface GlobalIndex {
@@ -344,8 +489,11 @@ export const api = {
   quantScreen: (input: QuantScreenInput) =>
     request<QuantScreenResult>("/quant/screen", "POST", input),
   quantFormulas: () => get<TdxFormulaPreset[]>("/quant/formulas"),
-  validateQuantFormula: (strategy: QuantStrategy, source: string) =>
-    request<TdxFormulaValidation>("/quant/formula/validate", "POST", { strategy, source }),
+  validateQuantFormula: (strategy: QuantStrategy, source: string, signal?: AbortSignal) =>
+    request<TdxFormulaValidation>("/quant/formula/validate", "POST", { strategy, source }, signal),
+  quantRpsStatus: () => get<QuantRpsStatus>("/quant/rps/status"),
+  triggerQuantRpsPrewarm: () =>
+    request<QuantRpsStatus & { triggered: boolean }>("/quant/rps/prewarm", "POST"),
   myReports: () => get<MyReport[]>("/myreports"),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
