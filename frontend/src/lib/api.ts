@@ -195,6 +195,30 @@ export interface Quote {
   limit_up: number; limit_down: number;
 }
 
+// 日/周/月 K 线单根：mootdx bars 序列。datetime 用 ISO 字符串（to_dict 后 index 也保留为该字段）。
+export interface KlineBar {
+  datetime: string;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  vol: number;        // 股数
+  amount: number;     // 成交额（元）
+}
+
+// 个股 RPS 历史点：来自全市场横截面百分位排名（0–100，越大越强）。
+// trade_date 是 K 线图同源的日期串，前端把它和 bars 对齐到 x 轴上。
+export interface RpsPoint {
+  trade_date: string;
+  rps5: number;
+  rps10: number;
+  rps15: number;
+  rps20: number;
+  rps50: number;
+  rps120: number;
+  rps250: number;
+}
+
 export interface Valuation {
   name: string; code: string; price: number; mcap_yi: number;
   pe_ttm: number; pb: number;
@@ -360,6 +384,7 @@ export interface QuantRow {
   close?: number; year_high?: number; distance_to_high_pct?: number;
   history_days?: number; technical_date?: string | null;
   rps20?: number; rps50?: number; rps120?: number; rps250?: number;
+  change_pct?: number | null;  // 当日涨跌幅（%，腾讯实时）
   return20_pct?: number; return50_pct?: number; return120_pct?: number; return250_pct?: number;
   turnover_pct?: number | null; drawdown120_pct?: number;
   strategy_detail?: string; matched?: boolean;
@@ -495,6 +520,13 @@ export const api = {
   quantRpsStatus: () => get<QuantRpsStatus>("/quant/rps/status"),
   triggerQuantRpsPrewarm: () =>
     request<QuantRpsStatus & { triggered: boolean }>("/quant/rps/prewarm", "POST"),
+  // 个股 K 线（来自 mootdx）。category 4=日 5=周 6=月 11=60分钟；offset 1-800。
+  // 后端返回 {"data": [...]}，request() 在顶层把 data 字段剥出来，所以这里直接拿到数组。
+  kline: (code: string, opts: { category?: number; offset?: number } = {}) =>
+    get<KlineBar[]>(`/kline?code=${encodeURIComponent(code)}&category=${opts.category ?? 4}&offset=${opts.offset ?? 120}`),
+  // 个股 RPS 历史（最近约 20 个交易日）。后端只在 RPS 快照就绪时返回非空数组，
+  // 否则返回 []；前端 K 线页拿到 [] 时静默隐藏 RPS 副图，不报错。
+  rpsHistory: (code: string) => get<RpsPoint[]>(`/stock/rps-history?code=${encodeURIComponent(code)}`),
   myReports: () => get<MyReport[]>("/myreports"),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),

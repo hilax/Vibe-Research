@@ -40,9 +40,12 @@ _CACHE_LOCK = threading.RLock()
 _BASE_TTL = 24 * 3600
 _THREAD_LOCAL = threading.local()
 _RPS_CACHE_DIR = Path(__file__).with_name(".cache")
-_RPS_VERSION = 6
-_RPS_PERIODS = (20, 50, 120, 250)
-_RPS_HISTORY_DAYS = 20
+_RPS_VERSION = 8
+_RPS_PERIODS = (5, 10, 15, 20, 50, 120, 250)
+# RPS 历史回看窗口。= 0 表示只算截面最新一天的 RPS；增大可让副图覆盖更多 K 线日期。
+# 由于 RPS250 本身就需要 250 根 K 线，给到 560 能覆盖 K 线页默认 240 根日 K（= 250 + 310 余量）
+# 以及拉到 ~800 根时的全段 RPS。首次构建量随此值线性放大（每只股票多拉 N 根 K）。
+_RPS_HISTORY_DAYS = 560
 _STRATEGIES = {
     "near_high": "接近一年新高",
     "monthly_reversal_62": "月线反转 6.2",
@@ -497,6 +500,17 @@ def base_pool(
             ],
             "industry": "",
         })
+    # 给结果集一次性补全「行业」+「当日涨跌」。申万分类走 astock 的本地缓存
+    # （backend/data/sw_industry.json，30 天内复用）；当日涨跌走腾讯 qt.gtimg.cn
+    # （你这边网络唯一稳定可达的实时行情源，单次批量拉最多 80 只）。
+    if rows:
+        for r in rows:
+            r["industry"] = astock.get_sw_industry(r["code"])
+        # 腾讯行情接口一次最多 ~80 只，全市场 5000+ 必须分块；复用项目内的 _batch_quotes。
+        quotes = _batch_quotes([r["code"] for r in rows])
+        for r in rows:
+            q = quotes.get(r["code"]) or {}
+            r["change_pct"] = q.get("change_pct")
     rows.sort(key=lambda row: (
         -(int(row["fund_condition_met"]) + int(row["north_condition_met"])),
         -(row["fund_float_ratio_pct"] or 0),
@@ -551,6 +565,11 @@ def _security_page(market: int, start: int) -> list[dict]:
 
 
 def _hs_a_universe() -> list[dict]:
+    """沪深 A 股共同样本。
+
+    注：mootdx 标准协议对北交所 K 线接口返回空，因此北交所个股暂不纳入 RPS 横截面。
+    如未来切换到底层客户端，可放开此限制。
+    """
     key = ("hs-a-universe",)
     cached = _cache_get(key, 24 * 3600)
     if cached:
@@ -559,6 +578,8 @@ def _hs_a_universe() -> list[dict]:
     tasks = []
     for market in (0, 1):
         count = int(client.stock_count(market=market) or 0)
+        if count <= 0:
+            continue
         tasks.extend((market, start) for start in range(0, count, 1000))
     rows: list[dict] = []
     workers = max(2, min(12, int(os.environ.get("VR_RPS_WORKERS", "8"))))
@@ -768,26 +789,17 @@ def rps_snapshot() -> dict:
         }
         for item in date_items:
             code = item["code"]
-            historical_ranks.setdefault(code, []).append({
-                "trade_date": point_date,
-                "rps20": date_rank_maps[20][code],
-                "rps50": date_rank_maps[50][code],
-                "rps120": date_rank_maps[120][code],
-                "rps250": date_rank_maps[250][code],
-            })
+            point: dict[str, object] = {"trade_date": point_date}
+            for period in _RPS_PERIODS:
+                point[f"rps{period}"] = date_rank_maps[period][code]
+            historical_ranks.setdefault(code, []).append(point)
     stocks = {}
     for item in histories:
         code = item["code"]
         stocks[code] = {
             "name": item["name"],
-            "rps20": rank_maps[20][code],
-            "rps50": rank_maps[50][code],
-            "rps120": rank_maps[120][code],
-            "rps250": rank_maps[250][code],
-            "return20_pct": round(item["returns"][20] * 100, 3),
-            "return50_pct": round(item["returns"][50] * 100, 3),
-            "return120_pct": round(item["returns"][120] * 100, 3),
-            "return250_pct": round(item["returns"][250] * 100, 3),
+            **{f"rps{period}": rank_maps[period][code] for period in _RPS_PERIODS},
+            **{f"return{period}_pct": round(item["returns"][period] * 100, 3) for period in _RPS_PERIODS},
             "history": historical_ranks.get(code, []),
         }
     snapshot = {

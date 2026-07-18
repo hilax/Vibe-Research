@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import random
 import re
@@ -93,6 +94,61 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
     """批量个股实时行情：现价 / 涨跌 / PE / PB / 市值 / 换手 / 涨跌停。"""
     prefixed = [f"{get_prefix(c)}{c}" for c in codes]
     return _parse_gtimg(_fetch_gtimg(prefixed))
+
+
+# ── 申万一级行业静态映射 ─────────────────────────────────────
+# akshare 东财接口（push2.eastmoney.com）在科学上网环境下被代理掐，
+# 腾讯主行情又不含行业字段。这里用 sw_index_first_info + index_component_sw
+# 一次拉全市场，构建 {code: 一级行业名} 字典，落盘到 backend/data/sw_industry.json。
+# 文件 > 30 天自动重建一次；缺文件则同步构建（启动时阻塞 ~10s）。
+_SW_INDUSTRY_PATH = Path(__file__).parent / "data" / "sw_industry.json"
+_SW_INDUSTRY_MAX_AGE_DAYS = 30
+_sw_industry_cache: dict[str, str] | None = None
+_sw_industry_lock = threading.Lock()
+
+
+def _build_sw_industry_map() -> dict[str, str]:
+    import akshare as ak
+    first = ak.sw_index_first_info()
+    out: dict[str, str] = {}
+    for code, name in zip(first["行业代码"], first["行业名称"]):
+        secid = code.replace(".SI", "")
+        try:
+            df = ak.index_component_sw(symbol=secid)
+            for sc in df["证券代码"]:
+                out[str(sc).zfill(6)] = name
+        except Exception:
+            continue
+    return out
+
+
+def get_sw_industry(code: str) -> str:
+    """返回 code（6 位）的申万一级行业名；查不到返回空串。"""
+    global _sw_industry_cache
+    if _sw_industry_cache is None:
+        with _sw_industry_lock:
+            if _sw_industry_cache is None:
+                need_build = True
+                if _SW_INDUSTRY_PATH.exists():
+                    age_days = (time.time() - _SW_INDUSTRY_PATH.stat().st_mtime) / 86400
+                    if age_days <= _SW_INDUSTRY_MAX_AGE_DAYS:
+                        try:
+                            with _SW_INDUSTRY_PATH.open() as f:
+                                payload = json.load(f)
+                            _sw_industry_cache = payload.get("map", {})
+                            need_build = False
+                        except Exception:
+                            need_build = False  # 损坏则重建
+                if need_build:
+                    try:
+                        built = _build_sw_industry_map()
+                        _SW_INDUSTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+                        with _SW_INDUSTRY_PATH.open("w") as f:
+                            json.dump({"version": time.strftime("%Y-%m-%d"), "map": built}, f, ensure_ascii=False)
+                        _sw_industry_cache = built
+                    except Exception:
+                        _sw_industry_cache = {}  # 拉取失败时静默为空，业务侧显示 —
+    return _sw_industry_cache.get(code, "")
 
 
 # A股大盘指数（前缀规则与个股不同，固定带前缀代码）

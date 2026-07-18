@@ -11,6 +11,7 @@ import { MyReports } from "@/pages/MyReports";
 import { Notes } from "@/pages/Notes";
 import { Settings } from "@/pages/Settings";
 import { QuantScreening } from "@/pages/QuantScreening";
+import { StockKline } from "@/pages/StockKline";
 
 export const router = createBrowserRouter([
   {
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "/portfolio", element: <Portfolio /> },
       { path: "/stock-data", element: <StockData /> },
       { path: "/quant-screening", element: <QuantScreening /> },
+      { path: "/stock-kline/:code", element: <StockKline /> },
       { path: "/watchlist", element: <Watchlist /> },
       { path: "/my-reports", element: <MyReports /> },
       { path: "/notes", element: <Notes /> },

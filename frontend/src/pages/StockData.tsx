@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Search, FileText, Newspaper, Loader2, AlertCircle, LineChart, BarChart3, Megaphone,
   Wallet, Trophy, CalendarClock, Boxes, MessageSquare,
@@ -7,7 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { EarningsSnapshot } from "@/components/ui/EarningsSnapshot";
-import { Disclaimer } from "@/components/ui/Disclaimer";
+import { KlineCard } from "@/components/ui/KlineCard";
 import {
   api, ApiError, type Valuation, type Report, type NewsItem, type ValPercentile, type ValMetric,
   type Financials, type Announcement, type MarginRow, type BlockTradeRow, type HolderRow,
@@ -100,12 +101,21 @@ export function StockData() {
   const [hotCon, setHotCon] = useState<HotConcept[]>([]);
   const [qa, setQa] = useState<QaRow[]>([]);
   const [gstock, setGStock] = useState<GlobalStock | null>(null);  // 美股 / 港股
+  // K 线卡的渲染触发 key：查询完成后写入 code，KlineCard 仅在 key 变化时重新拉取。
+  const [kcode, setKcode] = useState("");
   const runIdRef = useRef(0);
+  // 自动跳转支持：run() 通过 ref 暴露给 ?code= effect，避免依赖循环。
+  const runRef = useRef<() => void>(() => {});
+  const [searchParams, setSearchParams] = useSearchParams();
+  const lastQueryCodeRef = useRef("");
 
   const run = async () => {
     const c = code.trim().toUpperCase();
     if (!c) { setErr("请输入代码"); return; }
     const rid = ++runIdRef.current;
+    lastQueryCodeRef.current = c;
+    // 把当前代码同步写入 URL，便于分享 / 收藏；replace 模式不污染历史栈。
+    if (searchParams.get("code") !== c) setSearchParams({ code: c }, { replace: true });
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
     setGStock(null);
@@ -150,6 +160,8 @@ export function StockData() {
       setPctl(p);
       setFin(f);
       setAnns(a);
+      // A 股头部数据回填完成后，再触发 K 线卡刷新（仅 A 股支持 K 线）。
+      setKcode(c);
       try {
         const n = await api.news(c);
         if (rid === runIdRef.current) setNews(n);
@@ -163,6 +175,19 @@ export function StockData() {
       if (rid === runIdRef.current) setLoading(false);
     }
   };
+  // 把 run() 暴露给 ?code= effect 调用；ref 可避免 effect 依赖 run 函数本身。
+  runRef.current = run;
+
+  // URL ?code= 直达：首次进入带 ?code= 的页面时自动触发查询；后续手动查询会同步更新 URL。
+  useEffect(() => {
+    const q = (searchParams.get("code") || "").trim().toUpperCase();
+    if (!q) return;
+    if (q === lastQueryCodeRef.current) return; // 防止与刚刚同步入 URL 的目标重复触发
+    setCode(q);
+    // 状态更新异步，等下一帧再调用 run，让 setCode 反映在闭包里。
+    queueMicrotask(() => runRef.current());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const metrics = val ? [
     { k: "现价", v: fmt(val.price) },
@@ -196,7 +221,7 @@ export function StockData() {
     <div>
       <PageHeader
         title="个股数据"
-        subtitle="行情 · 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
+        subtitle="K 线（含 4 套通达信公式信号）· 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
         actions={(val || gstock) && (
           <AskAiButton
             context={gstock ? gAiContext : aiContext}
@@ -317,6 +342,9 @@ export function StockData() {
               <p className="mt-3 text-xs text-warning">{val.forecast_note}</p>
             )}
           </GlassCard>
+
+          {/* K 线主图（A 股）：含 4 套通达信公式信号（金手指 / 顺向火车轨 / 蓝钻 / 月线反转 / 小黄人）。 */}
+          {kcode && <KlineCard key={kcode} code={kcode} name={val.name} />}
 
           {/* 财报速览（结论先行摘要，借鉴 equity-research 的结构纪律，剔除评级/目标价） */}
           <EarningsSnapshot val={val} fin={fin} pctl={pctl} />
@@ -555,8 +583,6 @@ export function StockData() {
           </div>
         </GlassCard>
       )}
-
-      <Disclaimer />
     </div>
   );
 }

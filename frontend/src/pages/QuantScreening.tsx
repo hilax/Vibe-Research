@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import {
   AlertTriangle, ChevronDown, ChevronUp, Code2, Database,
   Filter, Layers3, LoaderCircle, Pencil, Play, Plus, RefreshCw,
@@ -6,7 +7,6 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Disclaimer } from "@/components/ui/Disclaimer";
 import {
   TdxFormulaEditor, type TdxFormulaValidationState,
 } from "@/components/quant/TdxFormulaEditor";
@@ -19,6 +19,21 @@ import {
 import { addCodes, loadWatch, saveWatch } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+// ── 跨路由保留最近一次筛选结果 ─────────────────────────────────────
+// 列表行点击会跳到 /stock-kline/:code，按浏览器返回时 React Router 会重新挂载
+// /quant-screening，整个组件的 useState 回到初始值，结果就消失了。
+// 这里用 module-level cache 把上一次的「输入 + 结果 + 当前 tab」缓存下来，
+// 组件 mount 时优先从 cache 恢复（不是 localStorage，避免跨会话显示陈旧数据）。
+type CachedSnapshot = {
+  input: import("@/lib/api").QuantScreenInput;
+  result: import("@/lib/api").QuantScreenResult;
+  view: "matched" | "base";
+  selectedKey: string;
+  fundRatioMin: number;
+  northValueMin: number;
+};
+let _cachedSnapshot: CachedSnapshot | null = null;
 
 // ── 阶段文案 + 顺序权重（用于"总体进度条"）──────────────────────────────────
 const PHASE_LABEL: Record<string, string> = {
@@ -152,14 +167,14 @@ function ConditionInput({
 }
 
 export function QuantScreening() {
-  // 筛选参数
-  const [fundRatioMin, setFundRatioMin] = useState(5);
-  const [northValueMin, setNorthValueMin] = useState(1);
-  const [selectedKey, setSelectedKey] = useState<string>("near_high");
+  // 筛选参数（默认从 module-level cache 取，保持跨路由返回时不丢筛选上下文）
+  const [fundRatioMin, setFundRatioMin] = useState(_cachedSnapshot?.fundRatioMin ?? 5);
+  const [northValueMin, setNorthValueMin] = useState(_cachedSnapshot?.northValueMin ?? 1);
+  const [selectedKey, setSelectedKey] = useState<string>(_cachedSnapshot?.selectedKey ?? "near_high");
 
   // 运行状态
-  const [result, setResult] = useState<QuantScreenResult | null>(null);
-  const [view, setView] = useState<"matched" | "base">("matched");
+  const [result, setResult] = useState<QuantScreenResult | null>(_cachedSnapshot?.result ?? null);
+  const [view, setView] = useState<"matched" | "base">(_cachedSnapshot?.view ?? "matched");
   const [loading, setLoading] = useState(false);
   const [formulaLoading, setFormulaLoading] = useState(true);
   const [validating, setValidating] = useState(false);
@@ -175,6 +190,7 @@ export function QuantScreening() {
 
   // RPS 后台预热状态（轮询）
   const [rpsStatus, setRpsStatus] = useState<QuantRpsStatus | null>(null);
+  const navigate = useNavigate();
   const rpsPollAbortRef = useRef<AbortController | null>(null);
 
   // 自选股（localStorage 同步）
@@ -188,6 +204,8 @@ export function QuantScreening() {
 
   // 编辑器折叠
   const [showEditor, setShowEditor] = useState(false);
+  // 基础池条件折叠（默认收起，留出空间让用户先看公式/策略）
+  const [showBasePool, setShowBasePool] = useState(false);
 
   // 新增策略表单
   const [showAddForm, setShowAddForm] = useState(false);
@@ -319,6 +337,61 @@ export function QuantScreening() {
     () => (view === "matched" ? result?.rows ?? [] : result?.base_rows ?? []),
     [result, view],
   );
+  // ── 列表排序：每列表头可点击，三态循环（无 → 升 → 降 → 无）。
+  // 用独立的 sortedRows 喂表格，rows 保持原始顺序——批量「加自选」等仍按后端返回顺序遍历。
+  type SortKey =
+    | "name" | "industry" | "fund_float_ratio_pct" | "fund_count" | "fund_hold_value_yi"
+    | "north_hold_value_yi" | "north_total_ratio_pct"
+    | "rps20" | "rps50" | "rps120" | "rps250"
+    | "turnover_pct" | "revenue_yoy_pct" | "net_profit_yoy_pct"
+    | "close" | "year_high" | "distance_to_high_pct"
+    | "change_pct";
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const toggleSort = (key: SortKey) => {
+    if (sortKey !== key) { setSortKey(key); setSortDir("asc"); return; }
+    if (sortDir === "asc") { setSortDir("desc"); return; }
+    setSortKey(null); setSortDir("asc"); // 再点一次回到默认（按后端原序）
+  };
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return rows;
+    const k = sortKey;
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const av = a[k] as number | string | null | undefined;
+      const bv = b[k] as number | string | null | undefined;
+      // null/undefined 永远沉底，避免一个缺值把整列弄乱
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") {
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
+      const sa = String(av), sb = String(bv);
+      return sortDir === "asc" ? sa.localeCompare(sb, "zh") : sb.localeCompare(sa, "zh");
+    });
+    return arr;
+  }, [rows, sortKey, sortDir]);
+  const SortHead = ({ k, label, align = "left" }: { k: SortKey; label: string; align?: "left" | "right" }) => {
+    const active = sortKey === k;
+    return (
+      <th
+        onClick={() => toggleSort(k)}
+        className={cn(
+          "whitespace-nowrap px-3 py-2.5 font-medium select-none cursor-pointer hover:text-foreground transition-colors",
+          align === "right" && "text-right",
+        )}
+        title="点击排序"
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          <span className={cn("text-[10px] leading-none", active ? "text-primary" : "text-muted-foreground/40")}>
+            {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+          </span>
+        </span>
+      </th>
+    );
+  };
   const usesRps = result
     ? (result.criteria.uses_rps ?? result.strategy !== "near_high")
     : false;
@@ -328,7 +401,6 @@ export function QuantScreening() {
   const usesCapital = result
     ? (result.criteria.uses_capital ?? result.strategy === "growth_mrgc_sxhcg")
     : false;
-  const showsFormulaDetail = rows.some((row) => Boolean(row.strategy_detail));
 
   // ── 事件处理 ────────────────────────────────────────────────────────────────
   const updateFormulaSource = (source: string) => {
@@ -418,6 +490,21 @@ export function QuantScreening() {
       );
       setResult(data);
       setView("matched");
+      // 把这次成功的「输入 + 结果 + 当前 tab」存到 module-level cache，
+      // 这样点行进 K 线页、再按浏览器返回时，结果不会丢。
+      _cachedSnapshot = {
+        input: {
+          strategy: selected.baseStrategy,
+          fund_ratio_min: fundRatioMin,
+          north_value_min_yi: northValueMin,
+          formula_source: checked.normalized_source,
+        },
+        result: data,
+        view: "matched",
+        selectedKey,
+        fundRatioMin,
+        northValueMin,
+      };
       setProgressPhase(null);
       setProgressMessage("");
       setProgressDone(0);
@@ -459,6 +546,7 @@ export function QuantScreening() {
     setResult(null);
     setView("matched");
     setShowEditor(false);
+    _cachedSnapshot = null;
   };
 
   const handleAddStrategy = () => {
@@ -805,32 +893,48 @@ export function QuantScreening() {
 
         <div className="my-5 border-t border-border/40" />
 
-        {/* ── 基础池条件 ── */}
-        <SectionLabel
-          icon={<Filter className="h-4 w-4" />}
-          title="基础池条件"
-          desc="基金或北向满足任一项即可入池"
-        />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <ConditionInput
-            label="基金持股占流通股 ≥"
-            value={fundRatioMin}
-            suffix="%"
-            min={0.1}
-            max={100}
-            step={0.5}
-            onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); }}
-          />
-          <ConditionInput
-            label="北向持股市值 ≥"
-            value={northValueMin}
-            suffix="亿元"
-            min={0}
-            max={100000}
-            step={0.5}
-            onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); }}
-          />
-        </div>
+        {/* ── 基础池条件（默认折叠，点标题展开）── */}
+        <button
+          type="button"
+          onClick={() => setShowBasePool((v) => !v)}
+          className={cn(
+            "flex w-full items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm transition-all",
+            showBasePool
+              ? "border-primary/40 bg-primary/5 text-foreground"
+              : "border-border/60 bg-black/15 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+          )}
+        >
+          <span className="flex items-center gap-2">
+            <span className="text-primary"><Filter className="h-4 w-4" /></span>
+            <span className="text-sm font-semibold">基础池条件</span>
+            <span className="text-xs text-muted-foreground">基金或北向满足任一项即可入池</span>
+          </span>
+          {showBasePool
+            ? <ChevronUp className="h-4 w-4 shrink-0 text-primary" />
+            : <ChevronDown className="h-4 w-4 shrink-0" />}
+        </button>
+        {showBasePool && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <ConditionInput
+              label="基金持股占流通股 ≥"
+              value={fundRatioMin}
+              suffix="%"
+              min={0.1}
+              max={100}
+              step={0.5}
+              onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
+            />
+            <ConditionInput
+              label="北向持股市值 ≥"
+              value={northValueMin}
+              suffix="亿元"
+              min={0}
+              max={100000}
+              step={0.5}
+              onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
+            />
+          </div>
+        )}
 
         <div className="my-5 border-t border-border/40" />
 
@@ -1050,13 +1154,13 @@ export function QuantScreening() {
                 </button>
                 <div className="flex rounded-lg bg-black/20 p-1 text-xs">
                   <button
-                    onClick={() => setView("matched")}
+                    onClick={() => { setView("matched"); if (_cachedSnapshot) _cachedSnapshot.view = "matched"; }}
                     className={cn("rounded-md px-3 py-1.5", view === "matched" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
                   >
                     技术命中 {result.matched_count}
                   </button>
                   <button
-                    onClick={() => setView("base")}
+                    onClick={() => { setView("base"); if (_cachedSnapshot) _cachedSnapshot.view = "base"; }}
                     className={cn("rounded-md px-3 py-1.5", view === "base" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
                   >
                     基础池 {result.base_count}
@@ -1072,52 +1176,92 @@ export function QuantScreening() {
                 <table className="w-full min-w-[1380px] text-sm">
                   <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
                     <tr className="border-b border-border/60 text-left text-[11px] text-muted-foreground">
-                      {[
-                        "名称 / 代码", "入池条件", "行业", "基金占流通股", "基金家数", "基金持有市值", "北向持有市值", "北向占A股",
-                        ...(usesRps ? ["RPS20", "RPS50", "RPS120", "RPS250"] : []),
-                        ...(usesCapital ? ["换手率"] : []),
-                        ...(usesFinance ? ["营收同比", "净利同比"] : []),
-                        "最新收盘", "一年最高", "距新高", ...(showsFormulaDetail ? ["公式分支"] : []), "K线日期", "操作",
-                      ].map((heading) => (
-                        <th key={heading} className="whitespace-nowrap px-3 py-2.5 font-medium">{heading}</th>
-                      ))}
+                      <th className="whitespace-nowrap px-5 py-2.5 font-medium">
+                        <button type="button" onClick={() => toggleSort("name")}
+                          className={cn("inline-flex items-center gap-1 hover:text-foreground transition-colors", sortKey === "name" && "text-primary")}
+                          title="点击按名称排序">
+                          名称 / 代码
+                          <span className={cn("text-[10px] leading-none", sortKey === "name" ? "text-primary" : "text-muted-foreground/40")}>
+                            {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </button>
+                      </th>
+                      <SortHead k="change_pct" label="今日涨跌" align="right" />
+                      <SortHead k="industry" label="行业" />
+                      <SortHead k="fund_float_ratio_pct" label="基金占流通股" align="right" />
+                      <SortHead k="fund_count" label="基金家数" align="right" />
+                      <SortHead k="fund_hold_value_yi" label="基金持有市值" align="right" />
+                      <SortHead k="north_hold_value_yi" label="北向持有市值" align="right" />
+                      <SortHead k="north_total_ratio_pct" label="北向占A股" align="right" />
+                      {usesRps && (
+                        <>
+                          <SortHead k="rps20" label="RPS20" align="right" />
+                          <SortHead k="rps50" label="RPS50" align="right" />
+                          <SortHead k="rps120" label="RPS120" align="right" />
+                          <SortHead k="rps250" label="RPS250" align="right" />
+                        </>
+                      )}
+                      {usesCapital && <SortHead k="turnover_pct" label="换手率" align="right" />}
+                      {usesFinance && (
+                        <>
+                          <SortHead k="revenue_yoy_pct" label="营收同比" align="right" />
+                          <SortHead k="net_profit_yoy_pct" label="净利同比" align="right" />
+                        </>
+                      )}
+                      <SortHead k="close" label="最新收盘" align="right" />
+                      <SortHead k="year_high" label="一年最高" align="right" />
+                      <SortHead k="distance_to_high_pct" label="距新高" align="right" />
+                      <th className="whitespace-nowrap px-3 py-2.5 font-medium">K线日期</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 font-medium">操作</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((row: QuantRow) => (
-                      <tr key={row.code} className="border-b border-border/30 hover:bg-muted/20">
-                        <td className="px-3 py-2.5">
-                          <div className="font-medium">{row.name}</div>
-                          <div className="font-mono text-[11px] text-muted-foreground">{row.code}</div>
+                    {sortedRows.map((row: QuantRow) => (
+                      <tr key={row.code}
+                        onClick={() => navigate(`/stock-kline/${row.code}`)}
+                        className="cursor-pointer border-b border-border/30 hover:bg-muted/20">
+                        <td className="px-5 py-2.5">
+                          <Link to={`/stock-kline/${row.code}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="block">
+                            <div className="font-medium">{row.name}</div>
+                            <div className="font-mono text-[11px] text-muted-foreground">{row.code}</div>
+                          </Link>
                         </td>
-                        <td className="whitespace-nowrap px-3 py-2.5 text-xs text-primary">{row.condition_tags?.join(" + ") || "—"}</td>
+                        <td className={cn(
+                          "px-3 py-2.5 text-right font-mono",
+                          row.change_pct == null ? "text-muted-foreground" :
+                          (row.change_pct as number) > 0 ? "text-danger" :
+                          (row.change_pct as number) < 0 ? "text-success" : "text-muted-foreground",
+                        )}>
+                          {row.change_pct == null ? "—" : `${(row.change_pct as number) > 0 ? "+" : ""}${(row.change_pct as number).toFixed(2)}%`}
+                        </td>
                         <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{row.industry || "—"}</td>
-                        <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.fund_float_ratio_pct, 2)}%</td>
-                        <td className="px-3 py-2.5 font-mono">{row.fund_count}</td>
-                        <td className="px-3 py-2.5 font-mono">{numberText(row.fund_hold_value_yi)}亿</td>
-                        <td className="px-3 py-2.5 font-mono">{numberText(row.north_hold_value_yi)}亿</td>
-                        <td className="px-3 py-2.5 font-mono">{numberText(row.north_total_ratio_pct)}%</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-primary">{numberText(row.fund_float_ratio_pct, 2)}%</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{row.fund_count}</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{numberText(row.fund_hold_value_yi)}亿</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{numberText(row.north_hold_value_yi)}亿</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{numberText(row.north_total_ratio_pct)}%</td>
                         {usesRps && (
                           <>
-                            <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps20)}</td>
-                            <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps50)}</td>
-                            <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps120)}</td>
-                            <td className="px-3 py-2.5 font-mono text-primary">{numberText(row.rps250)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-primary">{numberText(row.rps20)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-primary">{numberText(row.rps50)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-primary">{numberText(row.rps120)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-primary">{numberText(row.rps250)}</td>
                           </>
                         )}
                         {usesCapital && (
-                          <td className="px-3 py-2.5 font-mono">{numberText(row.turnover_pct)}%</td>
+                          <td className="px-3 py-2.5 text-right font-mono">{numberText(row.turnover_pct)}%</td>
                         )}
                         {usesFinance && (
                           <>
-                            <td className="px-3 py-2.5 font-mono">{numberText(row.revenue_yoy_pct)}%</td>
-                            <td className="px-3 py-2.5 font-mono">{numberText(row.net_profit_yoy_pct)}%</td>
+                            <td className="px-3 py-2.5 text-right font-mono">{numberText(row.revenue_yoy_pct)}%</td>
+                            <td className="px-3 py-2.5 text-right font-mono">{numberText(row.net_profit_yoy_pct)}%</td>
                           </>
                         )}
-                        <td className="px-3 py-2.5 font-mono">{numberText(row.close, 3)}</td>
-                        <td className="px-3 py-2.5 font-mono">{numberText(row.year_high, 3)}</td>
-                        <td className="px-3 py-2.5 font-mono text-primary">{row.distance_to_high_pct == null ? "—" : `${numberText(row.distance_to_high_pct, 2)}%`}</td>
-                        {showsFormulaDetail && <td className="whitespace-nowrap px-3 py-2.5 text-xs text-muted-foreground">{row.strategy_detail || "—"}</td>}
+                        <td className="px-3 py-2.5 text-right font-mono">{numberText(row.close, 3)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{numberText(row.year_high, 3)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-primary">{row.distance_to_high_pct == null ? "—" : `${numberText(row.distance_to_high_pct, 2)}%`}</td>
                         <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">{row.technical_date || "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2.5">
                           {watchSet.has(row.code) ? (
@@ -1152,8 +1296,6 @@ export function QuantScreening() {
           </div>
         </GlassCard>
       )}
-
-      <Disclaimer />
     </div>
   );
 }

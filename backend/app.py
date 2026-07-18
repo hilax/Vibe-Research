@@ -744,6 +744,39 @@ def kline(code: str = Query(...), category: int = Query(4), offset: int = Query(
         raise HTTPException(502, f"K线源异常：{e}") from e
 
 
+@app.get("/api/stock/rps-history")
+def stock_rps_history(code: str = Query(...)):
+    """个股 RPS50/120/250 历史（来自全市场横截面百分位排名快照）。
+
+    只读取 rps_snapshot() 的内存/磁盘缓存，不触发重建（避免冷启动阻塞）。
+    缓存缺失或个股不在样本内时返回空数组，前端降级隐藏副图 RPS 折线。
+    """
+    code = _validate(code)
+    try:
+        snapshot = quant.rps_snapshot()
+    except quant.QuantDataError:
+        return {"data": [], "ready": False}
+    except Exception:  # noqa: BLE001 — 兜底：不让 K 线页因 RPS 接口挂掉而失败
+        return {"data": [], "ready": False}
+    history = (snapshot.get("stocks") or {}).get(code, {}).get("history") or []
+    return {
+        "data": [
+            {
+                "trade_date": point.get("trade_date"),
+                "rps5": point.get("rps5"),
+                "rps10": point.get("rps10"),
+                "rps15": point.get("rps15"),
+                "rps20": point.get("rps20"),
+                "rps50": point.get("rps50"),
+                "rps120": point.get("rps120"),
+                "rps250": point.get("rps250"),
+            }
+            for point in history
+        ],
+        "ready": True,
+    }
+
+
 @app.get("/api/finance")
 def finance(code: str = Query(...)):
     """季报财务快照（需 mootdx）。"""
