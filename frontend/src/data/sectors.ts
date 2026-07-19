@@ -4,6 +4,9 @@ import { biopharmaSector } from "./biopharma";
 import { businessSpaceSector } from "./businessSpace";
 import { hbmSector } from "./hbm";
 import { opticalSector } from "./optical";
+import { sectorNodeDetails, type CoreNodeDetail } from "./sectorNodeDetails";
+
+export type { CoreNodeDetail } from "./sectorNodeDetails";
 
 // 内容块的结构化定义。每个 block 是独立类型，渲染器按 type 分支。
 // 文字、引用、来源底注都来自结构化字段，杜绝"凭模型记忆"——任何具体数字必须可溯源。
@@ -196,6 +199,7 @@ export interface Sector {
   hot: boolean;
   verified: boolean;
   nodes: string[];
+  nodeDetails?: Record<string, CoreNodeDetail>;
   tags?: Tag[];
 }
 
@@ -215,5 +219,9 @@ const researchSectors = new Map(
 
 export const sectorsData: SectorsFile = {
   ...rawData,
-  sectors: rawData.sectors.map((sector) => researchSectors.get(sector.key) ?? sector),
+  sectors: rawData.sectors.map((sector) => {
+    const resolvedSector = researchSectors.get(sector.key) ?? sector;
+    const nodeDetails = sectorNodeDetails[resolvedSector.key];
+    return nodeDetails ? { ...resolvedSector, nodeDetails } : resolvedSector;
+  }),
 };

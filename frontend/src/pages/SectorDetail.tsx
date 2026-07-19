@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Wrench } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
+import { CoreNodeExplorer } from "@/components/sector/CoreNodeExplorer";
 import { TagGrid } from "@/components/sector/TagGrid";
 import { sectorsData } from "@/data/sectors";
 
@@ -55,14 +56,15 @@ export function SectorDetail() {
 
       {sector.verified ? (
         <div>
-          <h3 className="mb-3 text-sm font-semibold text-muted-foreground">核心环节（{sector.nodes.length}）</h3>
-          <div className="flex flex-wrap gap-2.5">
-            {sector.nodes.map((n) => (
-              <span key={n} className="rounded-full border border-primary/40 bg-primary/15 px-3.5 py-1.5 text-sm font-medium text-foreground shadow-glow transition-colors hover:bg-primary/25">
-                {n}
-              </span>
-            ))}
-          </div>
+          <h3 className="mb-3 text-sm font-semibold text-muted-foreground">
+            核心环节（{sector.nodes.length}）{sector.nodeDetails ? " · 点击查看解释" : ""}
+          </h3>
+          <CoreNodeExplorer
+            key={sector.key}
+            sectorKey={sector.key}
+            nodes={sector.nodes}
+            details={sector.nodeDetails}
+          />
           <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
             <Plus className="h-3.5 w-3.5" /> 想在某个环节挂上自己关注的标的？数据存在你本地，不会上传、不进仓库。
           </p>
