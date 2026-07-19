@@ -3,23 +3,24 @@ import { Link } from "react-router-dom";
 import { Loader2, AlertCircle, LineChart } from "lucide-react";
 import * as echarts from "echarts";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { api, ApiError, type KlineBar, type RpsPoint } from "@/lib/api";
-import { calcMA, computeSignals } from "@/lib/klineSignals";
+import { KlineFormulaEditor } from "@/components/kline/KlineFormulaEditor";
+import { api, ApiError, type KlineBar, type Quote, type RpsPoint } from "@/lib/api";
+import { useKlineMainFormula } from "@/hooks/useKlineMainFormula";
 import {
   KLINE_RED as RED,
+  KLINE_GREEN as GREEN,
   KLINE_MA_COLOR as MA_COLOR,
   KLINE_RPS_COLOR as RPS_COLOR,
   KLINE_RPS_HOT_LINE as RPS_HOT_LINE,
-  KLINE_SIGNAL_GLYPHS as SIGNAL_GLYPHS,
-  KLINE_SIGNAL_COLORS as SIGNAL_COLORS,
-  KLINE_SIGNAL_LABEL as SIGNAL_LABEL,
   KLINE_FREQ,
   klineFormatVol as fmtVol,
+  tdxDrawIconLabel,
+  tdxDrawIconSymbol,
 } from "@/lib/klinePalette";
 import { cn } from "@/lib/utils";
 
-type Frequency = 4 | 5 | 6 | 11; // 日 / 周 / 月 / 60分钟
-const FREQ_OPTIONS = KLINE_FREQ as unknown as { value: Frequency; label: string; offset: number }[];
+type Frequency = 3 | 4 | 5 | 6; // 60分钟 / 日 / 周 / 月
+const FREQ_OPTIONS = KLINE_FREQ as unknown as { value: Frequency; label: string }[];
 
 interface KlineCardProps {
   code: string;
@@ -28,14 +29,30 @@ interface KlineCardProps {
 }
 
 // 个股 K 线主图卡：嵌入到「个股数据」页 A 股分支内。
-// 视觉、ECharts 配置与原 /stock-kline/:code 路由保持一致；输出 4 套通达信公式信号标记。
+// 视觉、ECharts 配置与原 /stock-kline/:code 路由保持一致；输出 5 套通达信公式信号标记。
 export function KlineCard({ code, name: nameHint }: KlineCardProps) {
   const [freq, setFreq] = useState<Frequency>(4);
-  const offset = FREQ_OPTIONS.find((f) => f.value === freq)?.offset ?? 240;
   const [bars, setBars] = useState<KlineBar[] | null>(null);
   const [rps, setRps] = useState<RpsPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const formula = useKlineMainFormula(code, freq, bars, rps);
+
+  // 当日涨跌使用实时行情的现价 / 昨收口径，与当前选择的 K 线频率解耦。
+  useEffect(() => {
+    if (!code) return;
+    let cancelled = false;
+    setQuote(null);
+    api.quote(code)
+      .then((result) => {
+        if (!cancelled) setQuote(result[code] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setQuote(null);
+      });
+    return () => { cancelled = true; };
+  }, [code]);
 
   useEffect(() => {
     if (!code) return;
@@ -44,7 +61,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
     (async () => {
       try {
         const [k, rh] = await Promise.all([
-          api.kline(code, { category: freq, offset }),
+          api.kline(code, { category: freq, fullHistory: true }),
           // 仅日 K 拉 RPS（其他频率 RPS 没必要切），且失败降级静默。
           freq === 4
             ? api.rpsHistory(code).catch(() => [])
@@ -62,7 +79,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [code, freq, offset]);
+  }, [code, freq]);
 
   // ECharts：主图 K 线 + MA + 副图成交量 + RPS（自适应高度，下方占主图 1/4）
   const domRef = useRef<HTMLDivElement | null>(null);
@@ -77,25 +94,20 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
     return () => { ro.disconnect(); c.dispose(); chartRef.current = null; };
   }, []);
 
-  // 计算 series：OHLC + 副图所需数组 + RPS 按 bars 对齐 + 4 套公式信号
+  // 计算 series：OHLC + 副图 RPS + 后端安全解释器返回的动态主图公式结果。
   const series = useMemo(() => {
     if (!bars || bars.length === 0) return null;
     const dates = bars.map((b) => b.datetime);
     const ohlc = bars.map((b) => [b.open, b.close, b.low, b.high]);
-    const closes = bars.map((b) => b.close);
     const vols = bars.map((b, i) => ({
       value: b.vol,
-      itemStyle: { color: b.close >= (i > 0 ? bars[i - 1].close : b.open) ? RED : "#22c55e" },
+      itemStyle: { color: b.close >= (i > 0 ? bars[i - 1].close : b.open) ? RED : GREEN },
     }));
 
     const fillNull = (n: number) => new Array(n).fill(null) as (number | null)[];
-    let rps5Aligned = fillNull(bars.length);
-    let rps10Aligned = fillNull(bars.length);
-    let rps15Aligned = fillNull(bars.length);
     let rps50Base = fillNull(bars.length), rps50Hot = fillNull(bars.length);
     let rps120Base = fillNull(bars.length), rps120Hot = fillNull(bars.length);
     let rps250Base = fillNull(bars.length), rps250Hot = fillNull(bars.length);
-    let rps20Aligned = fillNull(bars.length);
     let showRps = rps.length > 0;
     if (showRps) {
       const idx = new Map<string, number>();
@@ -108,41 +120,36 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
           [p.rps120, rps120Base, rps120Hot],
           [p.rps250, rps250Base, rps250Hot],
         ] as const).forEach(([v, base, hot]) => {
+          // 通达信口径：RPS 原色线始终连续；>=90 时额外叠加红线。
+          // 不能把 base 在强势区置空，否则跨越 90 的两个独立 series 会断开。
+          base[i] = v;
           if (v >= RPS_HOT_LINE) hot[i] = v;
-          else base[i] = v;
         });
-        rps5Aligned[i] = p.rps5 ?? null;
-        rps10Aligned[i] = p.rps10 ?? null;
-        rps15Aligned[i] = p.rps15 ?? null;
-        rps20Aligned[i] = p.rps20 ?? null;
       }
       const anyHit =
-        rps50Base.some((v) => v != null) || rps50Hot.some((v) => v != null) ||
-        rps120Base.some((v) => v != null) || rps120Hot.some((v) => v != null) ||
-        rps250Base.some((v) => v != null) || rps250Hot.some((v) => v != null);
+        rps50Base.some((v) => v != null) ||
+        rps120Base.some((v) => v != null) ||
+        rps250Base.some((v) => v != null);
       if (!anyHit) showRps = false;
     }
 
-    const signals = computeSignals(bars, {
-      rps5: rps5Aligned, rps10: rps10Aligned, rps15: rps15Aligned,
-      rps20: rps20Aligned, rps50: rps50Base.map((v, i) => v ?? rps50Hot[i] ?? null),
-      rps120: rps120Base.map((v, i) => v ?? rps120Hot[i] ?? null),
-      rps250: rps250Base.map((v, i) => v ?? rps250Hot[i] ?? null),
-    });
+    const formulaLines = (formula.evaluation?.lines ?? []).filter(
+      (line) => line.values.length === bars.length,
+    );
+    const formulaIcons = (formula.evaluation?.icons ?? []).flatMap((layer) =>
+      layer.points
+        .filter((point) => point.index >= 0 && point.index < bars.length && Number.isFinite(point.price))
+        .map((point) => ({ ...point, icon: point.icon || layer.icon })),
+    );
 
     return {
-      dates, ohlc, closes, vols,
-      ma5: calcMA(closes, 5),
-      ma10: calcMA(closes, 10),
-      ma20: calcMA(closes, 20),
-      ma60: calcMA(closes, 60),
+      dates, ohlc, vols, formulaLines, formulaIcons,
       rps50Base, rps50Hot,
       rps120Base, rps120Hot,
       rps250Base, rps250Hot,
-      signals,
       showRps,
     };
-  }, [bars, rps]);
+  }, [bars, formula.evaluation, rps]);
 
   useEffect(() => {
     const c = chartRef.current;
@@ -205,45 +212,34 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
     const dataSeries: any[] = [
       {
         name: "K线", type: "candlestick", data: series.ohlc,
-        itemStyle: { color: RED, color0: "#22c55e", borderColor: RED, borderColor0: "#22c55e" },
-        markPoint: freq === 4 ? {
-          symbol: "pin", symbolSize: 26,
-          data: [
-            ...(series.signals?.sxhcg || []).flatMap((on, i) => on ? [{ name: SIGNAL_LABEL.sxhcg,
-              coord: [series.dates[i], series.ohlc[i][2]],
-              symbol: SIGNAL_GLYPHS.sxhcg, symbolOffset: [0, -10],
-              itemStyle: { color: SIGNAL_COLORS.sxhcg },
-              label: { show: false } }] : []),
-            ...(series.signals?.zcdx || []).flatMap((on, i) => on ? [{ name: SIGNAL_LABEL.zcdx,
-              coord: [series.dates[i], series.ohlc[i][2]],
-              symbol: SIGNAL_GLYPHS.zcdx, symbolOffset: [0, -24],
-              itemStyle: { color: SIGNAL_COLORS.zcdx },
-              label: { show: false } }] : []),
-            ...(series.signals?.yxfz || []).flatMap((on, i) => on ? [{ name: SIGNAL_LABEL.yxfz,
-              coord: [series.dates[i], series.ohlc[i][2]],
-              symbol: SIGNAL_GLYPHS.yxfz, symbolOffset: [0, -38],
-              itemStyle: { color: SIGNAL_COLORS.yxfz },
-              label: { show: false } }] : []),
-            ...(series.signals?.xhr || []).flatMap((on, i) => on ? [{ name: SIGNAL_LABEL.xhr,
-              coord: [series.dates[i], series.ohlc[i][2]],
-              symbol: SIGNAL_GLYPHS.xhr, symbolOffset: [0, -52],
-              itemStyle: { color: SIGNAL_COLORS.xhr },
-              label: { show: false } }] : []),
-          ],
-        } : undefined,
+        itemStyle: { color: RED, color0: GREEN, borderColor: RED, borderColor0: GREEN },
+        markPoint: {
+          symbolSize: 24,
+          data: series.formulaIcons.map((point) => ({
+            name: tdxDrawIconLabel(point.icon),
+            coord: [series.dates[point.index], point.price],
+            symbol: tdxDrawIconSymbol(point.icon),
+            symbolSize: 24,
+            label: { show: false },
+          })),
+        },
       },
-      { name: "MA5", type: "line", data: series.ma5, smooth: true, showSymbol: false,
-        lineStyle: { width: 1, color: MA_COLOR[0] } },
-      { name: "MA10", type: "line", data: series.ma10, smooth: true, showSymbol: false,
-        lineStyle: { width: 1, color: MA_COLOR[1] } },
-      { name: "MA20", type: "line", data: series.ma20, smooth: true, showSymbol: false,
-        lineStyle: { width: 1, color: MA_COLOR[2] } },
-      { name: "MA60", type: "line", data: series.ma60, smooth: true, showSymbol: false,
-        lineStyle: { width: 1, color: MA_COLOR[3] } },
       { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: series.vols },
     ];
 
-    const legendData = ["K线", "MA5", "MA10", "MA20", "MA60", "成交量"];
+    series.formulaLines.forEach((line, index) => {
+      dataSeries.push({
+        name: line.name,
+        type: "line",
+        data: line.values,
+        smooth: false,
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 1, color: MA_COLOR[index % MA_COLOR.length] },
+      });
+    });
+
+    const legendData = ["K线", ...series.formulaLines.map((line) => line.name), "成交量"];
     const xAxisIndices = [0, 1];
     if (series.showRps) {
       const rpsLines = [
@@ -254,11 +250,11 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
       for (const { name, base, hot, color } of rpsLines) {
         dataSeries.push(
           { name, type: "line", data: base, xAxisIndex: 2, yAxisIndex: 2,
-            smooth: true, showSymbol: false, connectNulls: false,
-            lineStyle: { width: 1, color } },
+            smooth: false, showSymbol: false, connectNulls: false,
+            lineStyle: { width: 1, color, cap: "round", join: "round" } },
           { name: `${name} ≥ ${RPS_HOT_LINE}`, type: "line", data: hot, xAxisIndex: 2, yAxisIndex: 2,
-            smooth: true, showSymbol: false, connectNulls: false,
-            lineStyle: { width: 1.8, color: RPS_COLOR.hot }, z: 5,
+            smooth: false, showSymbol: false, connectNulls: false,
+            lineStyle: { width: 1.8, color: RPS_COLOR.hot, cap: "round", join: "round" }, z: 5,
             legendHoverLink: false },
         );
       }
@@ -266,6 +262,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
       xAxisIndices.push(2);
     }
 
+    const defaultStartValue = Math.max(0, series.dates.length - 240);
     c.setOption({
       animation: false,
       legend: {
@@ -288,23 +285,35 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
           if (candle && Array.isArray(candle.data)) {
             const [o, c, l, h] = candle.data;
             const up = c >= o;
-            const color = up ? "#ef4444" : "#22c55e";
+            const color = up ? RED : GREEN;
             lines.push(
               `<div>开 <span style="color:${color}">${(+o).toFixed(2)}</span> ` +
               `收 <span style="color:${color}">${(+c).toFixed(2)}</span> ` +
               `高 <span style="color:${color}">${(+h).toFixed(2)}</span> ` +
               `低 <span style="color:${color}">${(+l).toFixed(2)}</span></div>`,
             );
+            const previousClose = idx > 0 ? series.ohlc[idx - 1][1] : null;
+            if (previousClose != null && Number.isFinite(+previousClose) && +previousClose !== 0) {
+              const change = +c - +previousClose;
+              const changePct = (change / +previousClose) * 100;
+              const changeColor = change > 0 ? RED : change < 0 ? GREEN : "#94a3b8";
+              const sign = change > 0 ? "+" : "";
+              lines.push(
+                `<div style="color:#94a3b8">涨跌 ` +
+                `<span style="color:${changeColor}">${sign}${change.toFixed(2)}</span> · 涨跌幅 ` +
+                `<span style="color:${changeColor}">${sign}${changePct.toFixed(2)}%</span></div>`,
+              );
+            }
           }
           const vol = params.find((p: any) => p.seriesName === "成交量");
           if (vol && typeof vol.data === "number") {
             lines.push(`<div style="color:#94a3b8">成交量 <span style="color:#e2e8f0">${fmtVol(vol.data)}</span></div>`);
           }
           const maLines: string[] = [];
-          for (const ma of ["MA5", "MA10", "MA20", "MA60"] as const) {
-            const p = params.find((x: any) => x.seriesName === ma);
+          for (const line of series.formulaLines) {
+            const p = params.find((x: any) => x.seriesName === line.name);
             const v = p && typeof p.data === "number" ? p.data : null;
-            if (v != null) maLines.push(`${ma} <span style="color:#e2e8f0">${v.toFixed(2)}</span>`);
+            if (v != null) maLines.push(`${line.name} <span style="color:#e2e8f0">${v.toFixed(2)}</span>`);
           }
           if (maLines.length) lines.push(`<div style="color:#94a3b8">${maLines.join(" · ")}</div>`);
           if (series.showRps) {
@@ -329,14 +338,37 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
       xAxis: xAxes,
       yAxis: yAxes,
       dataZoom: [
-        { type: "inside", xAxisIndex: xAxisIndices, start: 70, end: 100 },
+        { type: "inside", xAxisIndex: xAxisIndices,
+          startValue: defaultStartValue, endValue: series.dates.length - 1 },
         { type: "slider", xAxisIndex: xAxisIndices, bottom: 6, height: 18,
+          startValue: defaultStartValue, endValue: series.dates.length - 1,
           borderColor: "#334155", fillerColor: "rgba(99,102,241,0.18)",
           handleStyle: { color: "#6366f1" }, textStyle: { color: "#94a3b8", fontSize: 10 } },
       ],
       series: dataSeries,
-    });
+    }, { notMerge: true });
   }, [series]);
+
+  const latestDailyBar = freq === 4 && bars?.length ? bars[bars.length - 1] : null;
+  const previousDailyBar = freq === 4 && bars && bars.length > 1 ? bars[bars.length - 2] : null;
+  const currentPrice = quote?.price ?? latestDailyBar?.close ?? null;
+  const previousClose = quote?.last_close ?? previousDailyBar?.close ?? null;
+  const dailyChange = currentPrice != null && previousClose != null
+    ? currentPrice - previousClose
+    : null;
+  const dailyChangePct = quote && Number.isFinite(quote.change_pct)
+    ? quote.change_pct
+    : dailyChange != null && previousClose
+      ? (dailyChange / previousClose) * 100
+      : null;
+  const dailyTone = dailyChange == null
+    ? "text-muted-foreground"
+    : dailyChange > 0
+      ? "text-danger"
+      : dailyChange < 0
+        ? "text-success"
+        : "text-muted-foreground";
+  const dailySign = dailyChange != null && dailyChange > 0 ? "+" : "";
 
   return (
     <GlassCard className="relative">
@@ -344,7 +376,12 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
         <h3 className="flex items-center gap-1.5 text-sm font-semibold">
           <LineChart className="h-4 w-4 text-primary" /> K 线主图
           {nameHint && <span className="text-xs font-normal text-muted-foreground/70">· {nameHint} ({code})</span>}
-          <span className="text-[11px] font-normal text-muted-foreground/60">· 主图叠加 MA5/10/20/60 + 4 套公式信号</span>
+          {bars && bars.length > 0 && (
+            <span className="text-[11px] font-normal text-muted-foreground/60">
+              · {freq === 3 ? "数据源可用全量" : "上市以来"} {bars[0].datetime.slice(0, 10)} 至今 · {bars.length.toLocaleString("zh-CN")} 根
+            </span>
+          )}
+          <span className="text-[11px] font-normal text-muted-foreground/60">· 均线与图标由可编辑公式绘制</span>
         </h3>
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg bg-black/20 p-1 text-xs">
@@ -362,15 +399,33 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
           </Link>
         </div>
       </div>
+      {currentPrice != null && (
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg bg-black/15 px-3 py-2 text-xs">
+          <span className="text-muted-foreground">
+            现价 <b className={cn("ml-1 font-mono text-base", dailyTone)}>{currentPrice.toFixed(2)}</b>
+          </span>
+          <span className="text-muted-foreground">
+            当日涨跌 <b className={cn("ml-1 font-mono", dailyTone)}>
+              {dailyChange == null || dailyChangePct == null
+                ? "—"
+                : `${dailySign}${dailyChange.toFixed(2)} (${dailySign}${dailyChangePct.toFixed(2)}%)`}
+            </b>
+          </span>
+          <span className="font-mono text-muted-foreground">
+            昨收 {previousClose == null ? "—" : previousClose.toFixed(2)}
+          </span>
+        </div>
+      )}
       {error && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
           <AlertCircle className="h-4 w-4" /> {error}
         </div>
       )}
       <div ref={domRef} className="h-[560px] w-full" />
+      <KlineFormulaEditor formula={formula} />
       {loading && !bars && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 拉取 K 线…
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 拉取完整 K 线历史…
         </div>
       )}
       {!loading && bars && bars.length === 0 && !error && (

@@ -219,6 +219,41 @@ export interface RpsPoint {
   rps250: number;
 }
 
+export interface KlineFormulaPreset {
+  name: string;
+  syntax_version: string;
+  default_source: string;
+  supported_functions: string[];
+  supported_icon_range: [number, number];
+}
+
+export interface KlineFormulaLine {
+  name: string;
+  values: (number | null)[];
+}
+
+export interface KlineFormulaIconPoint {
+  index: number;
+  price: number;
+  icon: number;
+}
+
+export interface KlineFormulaIconLayer {
+  icon: number;
+  points: KlineFormulaIconPoint[];
+}
+
+export interface KlineFormulaEvaluation {
+  formula_hash: string;
+  normalized_source: string;
+  required_history: number;
+  used_functions: string[];
+  period: number;
+  bar_count: number;
+  lines: KlineFormulaLine[];
+  icons: KlineFormulaIconLayer[];
+}
+
 export interface Valuation {
   name: string; code: string; price: number; mcap_yi: number;
   pe_ttm: number; pb: number;
@@ -520,11 +555,32 @@ export const api = {
   quantRpsStatus: () => get<QuantRpsStatus>("/quant/rps/status"),
   triggerQuantRpsPrewarm: () =>
     request<QuantRpsStatus & { triggered: boolean }>("/quant/rps/prewarm", "POST"),
-  // 个股 K 线（来自 mootdx）。category 4=日 5=周 6=月 11=60分钟；offset 1-800。
+  // 个股 K 线（来自 mootdx）。category 3=60分钟 4=日 5=周 6=月；
+  // fullHistory=true 时后端按通达信 800 根/页回溯到上市首根。
   // 后端返回 {"data": [...]}，request() 在顶层把 data 字段剥出来，所以这里直接拿到数组。
-  kline: (code: string, opts: { category?: number; offset?: number } = {}) =>
-    get<KlineBar[]>(`/kline?code=${encodeURIComponent(code)}&category=${opts.category ?? 4}&offset=${opts.offset ?? 120}`),
-  // 个股 RPS 历史（最近约 20 个交易日）。后端只在 RPS 快照就绪时返回非空数组，
+  kline: (code: string, opts: { category?: number; offset?: number; fullHistory?: boolean } = {}) =>
+    get<KlineBar[]>(
+      `/kline?code=${encodeURIComponent(code)}` +
+      `&category=${opts.category ?? 4}` +
+      `&offset=${opts.offset ?? 120}` +
+      `&full_history=${opts.fullHistory ? "true" : "false"}`,
+    ),
+  klineFormulaPreset: () => get<KlineFormulaPreset>("/kline/formula/preset"),
+  evaluateKlineFormula: (
+    code: string,
+    category: number,
+    source: string,
+    bars: KlineBar[],
+    rpsHistory: RpsPoint[],
+    signal?: AbortSignal,
+  ) => request<KlineFormulaEvaluation>("/kline/formula/evaluate", "POST", {
+    code,
+    category,
+    source,
+    bars,
+    rps_history: rpsHistory,
+  }, signal),
+  // 个股 RPS 历史（最近约 560 个交易日）。后端只在 RPS 快照就绪时返回非空数组，
   // 否则返回 []；前端 K 线页拿到 [] 时静默隐藏 RPS 副图，不报错。
   rpsHistory: (code: string) => get<RpsPoint[]>(`/stock/rps-history?code=${encodeURIComponent(code)}`),
   myReports: () => get<MyReport[]>("/myreports"),

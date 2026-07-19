@@ -1,4 +1,4 @@
-// 通达信主图公式的纯函数实现：复刻 4 套公式（金手指 / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.5）。
+// 通达信主图公式的纯函数实现：复刻 5 套公式（金手指 / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.2 / 小黄人）。
 // 这里只放公式与滑动窗口工具；ECharts 渲染由 KlineCard / StockKline 各自持有。
 //
 // 与原通达信公式 1:1 对应：换手率 VOL/CAPITAL 在此项目里没有流通股本接口，宽松用 vol/1e6 近似，
@@ -69,7 +69,7 @@ export function barsSince(cond: boolean[], n: number, i: number): number {
 }
 
 // 通达信公式信号计算：逐日评估 5 套公式，返回每根 bar 上是否触发图标。
-// 公式逻辑来自用户给的源码（金手指 DMI/PDI / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.5 / 小黄人），
+// 公式逻辑来自用户给的源码（金手指 DMI/PDI / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.2 / 小黄人），
 // 用纯函数实现，逻辑与通达信同源代码逐字对应。
 export interface TdxSignals {
   // 金手指信号：图标 11（DMI.PDI<7）
@@ -170,6 +170,44 @@ export interface RpsInput {
   rps50: (number | null)[];
   rps120: (number | null)[];
   rps250: (number | null)[];
+}
+
+const CHART_SIGNAL_WARMUP_BARS = 300;
+const CHART_SIGNAL_FALLBACK_BARS = 800;
+
+// 当前 RPS 历史只覆盖最近一段，所有 RPS 公式在首个 RPS 点之前必然无法
+// 触发。公式最大预热量是 MA250 + REF(...,15)，因此从首个 RPS 点前 300
+// 根开始计算与传入全历史语义等价；不依赖 RPS 的金手指则始终按全历史 DMI
+// 单独计算，不能因为图表数据变长而丢掉早期信号。
+export function computeChartSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
+  const firstRpsIndex = bars.findIndex((_, index) => (
+    rps.rps5[index] != null || rps.rps10[index] != null ||
+    rps.rps15[index] != null || rps.rps20[index] != null ||
+    rps.rps50[index] != null || rps.rps120[index] != null ||
+    rps.rps250[index] != null
+  ));
+  const start = firstRpsIndex >= 0
+    ? Math.max(0, firstRpsIndex - CHART_SIGNAL_WARMUP_BARS)
+    : Math.max(0, bars.length - CHART_SIGNAL_FALLBACK_BARS);
+  const slicedRps: RpsInput = {
+    rps5: rps.rps5.slice(start),
+    rps10: rps.rps10.slice(start),
+    rps15: rps.rps15.slice(start),
+    rps20: rps.rps20.slice(start),
+    rps50: rps.rps50.slice(start),
+    rps120: rps.rps120.slice(start),
+    rps250: rps.rps250.slice(start),
+  };
+  const partial = computeSignals(bars.slice(start), slicedRps);
+  const fullDmi = computeDmi(bars, 14);
+  const prefix = () => new Array(start).fill(false) as boolean[];
+  return {
+    jsz: fullDmi.map((point) => point.pdi != null && point.pdi < 7),
+    sxhcg: prefix().concat(partial.sxhcg),
+    zcdx: prefix().concat(partial.zcdx),
+    yxfz: prefix().concat(partial.yxfz),
+    xhr: prefix().concat(partial.xhr),
+  };
 }
 
 export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
@@ -282,7 +320,9 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       zcdx[i] = d01 && d02 && d0rps && d02c && d03 && d04 && d05;
     }
 
-    // ─────── 月线反转 6.5 ───────
+    // ─────── 月线反转 6.2 ───────
+    // 与 backend/tdx_presets.py 的 MONTHLY_REVERSAL_62 保持逐项一致。
+    // “月线反转”是公式名称，公式本身在日 K 上通过 RPS 与长周期均线触发。
     {
       const r50 = rps.rps50[i] ?? 0;
       const r120 = rps.rps120[i] ?? 0;
@@ -299,7 +339,8 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       const l20 = llv(lows, 20, i) ?? lows[i];
       const f21 = l50 > l200 && f13;
       const f22 = l30 > l120 && f13;
-      const f23 = l20 > l50;
+      const l10 = llv(lows, 10, i) ?? lows[i];
+      const f23 = l20 > l50 && l10 > l20;
       const f2 = f21 || f22 || f23;
       const f31 = countPast(new Array(n).fill(false).map((_, k) => highs[k] >= (hhv(highs, 80, k) ?? highs[k])), 10, i);
       const c50 = c >= (hhv(closes, 50, i) ?? c);
@@ -308,38 +349,33 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       const f3 = f31 > 0 || f32;
       const f4 = gt(c, ma20[i]) && gt(c, ma200[i]) && (ma120[i] ?? 0) / (ma200[i] || 1) > 0.9;
       const gt200 = closes.map((cc, k) => gt(cc, ma200[k]));
-      const gt250 = closes.map((cc, k) => gt(cc, ma250[k]));
       const aa200 = countPast(gt200, 45, i);
-      const aa250 = countPast(gt250, 45, i);
       const lt200 = lows.map((ll, k) => ll < (ma200[k] ?? Infinity));
-      const lt250 = lows.map((ll, k) => ll < (ma250[k] ?? Infinity));
       const laa200 = countPast(lt200, 45, i);
-      const laa250 = countPast(lt250, 45, i);
-      const f51 = aa200 >= 2 && aa200 < 45;
+      const f51 = aa200 > 2 && aa200 < 45;
       const f52 = laa200 > 0 && aa200 > 2;
-      const f53 = laa250 > 0 && aa250 > 2;
-      const f5 = f51 || f52 || f53;
+      const f5 = f51 || f52;
 
-      const ma120Rise10 = i >= 10 && (ma120[i] ?? 0) >= (ma120[i - 10] ?? -Infinity);
-      const ma200Rise10 = i >= 10 && (ma200[i] ?? 0) >= (ma200[i - 10] ?? -Infinity);
-      const ma120Rise15 = i >= 15 && (ma120[i] ?? 0) >= (ma120[i - 15] ?? -Infinity);
-      const ma200Rise15 = i >= 15 && (ma200[i] ?? 0) >= (ma200[i - 15] ?? -Infinity);
-      const f601 = ma120Rise10 || ma200Rise10 || ma120Rise15 || ma200Rise15;
-      const f602 = (ma120Rise10 && ma200Rise10) || (ma120Rise15 && ma200Rise15);
-      const f603 = gt(ma120[i], ma200[i]) && f601;
+      const ma120Rise15 = i >= 15 && ma120[i] != null && ma120[i - 15] != null && ma120[i]! >= ma120[i - 15]!;
+      const ma200Rise15 = i >= 15 && ma200[i] != null && ma200[i - 15] != null && ma200[i]! >= ma200[i - 15]!;
+      const f601 = ma120Rise15 || ma200Rise15;
+      const f602 = ma120Rise15 && ma200Rise15;
+      const f603 = gt(ma120[i], ma200[i]) && gt(ma200[i], ma250[i]);
       const h30 = hhv(highs, 30, i) ?? highs[i];
       const f61 = l120 > 0 && h30 / l120 < 1.50 && f601;
-      const f62 = l120 > 0 && h30 / l120 < 1.55 && f602;
-      const f63 = l120 > 0 && h30 / l120 < 1.65 && f603 && f13;
+      const f62 = l120 > 0 && h30 / l120 < 1.60 && f602;
+      const f63 = l120 > 0 && h30 / l120 < 1.75 && f603 && f13;
       const f6 = f61 || f62 || f63;
       const h120 = hhv(highs, 120, i) ?? highs[i];
-      const f71 = h120 > 0 && h30 / h120 > 0.85;
-      const f72 = h120 > 0 && h30 / h120 > 0.8 && f13;
+      const h5 = hhv(highs, 5, i) ?? highs[i];
+      const f71 = h120 > 0 && h5 / h120 > 0.85;
+      const f72 = h120 > 0 && h5 / h120 > 0.8 && f13;
       const h10 = hhv(highs, 10, i) ?? highs[i];
       const f73 = h10 > 0 && c / h10 > 0.9;
       const f7 = (f71 || f72) && f73;
       const yxfzNow = !!(f1 && f2 && f3 && f4 && f5 && f6 && f7);
-      yxfz[i] = yxfzNow && barsSince(yxfz.slice(0, i + 1), 15, i) === 0;
+      // 原公式没有 BARSSINCEN 去重：条件连续成立时，通达信会在每根 K 线上画信号。
+      yxfz[i] = yxfzNow;
     }
 
     // ─────── 小黄人（板块 RPS 三线翻红）───────

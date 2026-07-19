@@ -66,3 +66,117 @@ def test_gstock_quote_full_null_shape():
     q = gstock._quote_from({})
     assert set(q) == {"code", "name", "price", "open", "high", "low", "prev_close", "amount", "mcap", "change_pct"}
     assert all(v is None for v in q.values())
+
+
+def test_kline_full_history_flag_is_forwarded(monkeypatch):
+    received = {}
+
+    def fake_kline(code, category=4, offset=60, *, full_history=False):
+        received.update({
+            "code": code, "category": category, "offset": offset,
+            "full_history": full_history,
+        })
+        return [{"datetime": "1991-04-03 15:00", "close": 1.0}]
+
+    monkeypatch.setattr(app_module.astock, "kline", fake_kline)
+    response = client.get(
+        "/api/kline?code=000001&category=4&offset=60&full_history=true"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"][0]["datetime"] == "1991-04-03 15:00"
+    assert received == {
+        "code": "000001", "category": 4, "offset": 60,
+        "full_history": True,
+    }
+
+
+def test_kline_rejects_unknown_frequency():
+    assert client.get("/api/kline?code=000001&category=11").status_code == 422
+
+
+def test_kline_empty_history_is_success(monkeypatch):
+    monkeypatch.setattr(app_module.astock, "kline", lambda *args, **kwargs: [])
+
+    response = client.get(
+        "/api/kline?code=000001&category=4&full_history=true"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"data": []}
+
+
+def test_kline_upstream_failure_is_502(monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("tdx unavailable")
+
+    monkeypatch.setattr(app_module.astock, "kline", fail)
+    response = client.get(
+        "/api/kline?code=000001&category=4&full_history=true"
+    )
+
+    assert response.status_code == 502
+    assert "K线源异常" in response.json()["detail"]
+
+
+def test_kline_formula_preset_is_editable_tdx_source():
+    response = client.get("/api/kline/formula/preset")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert "DMI.PDI" in data["default_source"]
+    assert "MA5:MA(CLOSE,5)" in data["default_source"]
+    assert "DRAWICON" in data["supported_functions"]
+    assert data["supported_icon_range"] == [1, 51]
+
+
+def test_kline_formula_evaluate_returns_dynamic_lines_and_icon_points(monkeypatch):
+    monkeypatch.setattr(
+        app_module.astock,
+        "tencent_quote",
+        lambda codes: {codes[0]: {"turnover_pct": 2.0}},
+    )
+    bars = [
+        {
+            "datetime": f"2026-01-{index:02d} 15:00",
+            "open": 10 + index / 10,
+            "high": 11 + index / 10,
+            "low": 9 + index / 10,
+            "close": 10 + index / 10,
+            "vol": 100_000,
+        }
+        for index in range(1, 21)
+    ]
+    response = client.post("/api/kline/formula/evaluate", json={
+        "code": "002821",
+        "category": 6,
+        "source": "PDI:=DMI.PDI;自选线:MA(C,7);DRAWICON(PERIOD=7 AND PDI<100,LOW,34);",
+        "bars": bars,
+        "rps_history": [],
+    })
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["period"] == 7
+    assert data["bar_count"] == 20
+    assert data["lines"][0]["name"] == "自选线"
+    assert len(data["lines"][0]["values"]) == 20
+    assert data["icons"][0]["icon"] == 34
+    assert data["icons"][0]["points"][-1]["index"] == 19
+
+
+def test_kline_formula_evaluate_reports_source_location():
+    response = client.post("/api/kline/formula/evaluate", json={
+        "code": "002821",
+        "category": 4,
+        "source": "A:=UNKNOWN(C);",
+        "bars": [{
+            "datetime": "2026-01-01 15:00", "open": 1, "high": 1,
+            "low": 1, "close": 1, "vol": 1,
+        }],
+    })
+
+    assert response.status_code == 422
+    issue = response.json()["detail"]["issues"][0]
+    assert issue["code"] == "unsupported_function"
+    assert issue["line"] == 1

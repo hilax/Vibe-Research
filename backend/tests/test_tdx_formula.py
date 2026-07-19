@@ -349,3 +349,37 @@ def test_bars_must_be_strictly_ascending():
     with pytest.raises(tdx_formula.TdxFormulaEvaluationError) as exc_info:
         tdx_formula.execute_formula("C>0;", bars)
     assert exc_info.value.issues[0]["code"] == "invalid_bars_order"
+
+
+def test_chart_evaluation_supports_period_dmi_member_and_full_draw_series():
+    bars = _trend_bars(40)
+    source = "PDI:=DMI.PDI;均线:MA(C,5);DRAWICON(PERIOD=7 AND PDI<100,LOW*0.96,11);"
+    program = tdx_formula.compile_formula(source)
+
+    monthly = program.evaluate_chart(
+        bars,
+        capital=10_000_000,
+        context={"period": 7},
+    )
+    daily = program.evaluate_chart(
+        bars,
+        capital=10_000_000,
+        context={"period": 5},
+    )
+
+    assert len(monthly["outputs"][0]["series"]) == len(bars)
+    expected_ma = sum(row["close"] for row in bars[-5:]) / 5
+    assert abs(monthly["outputs"][0]["series"][-1] - expected_ma) < 1e-9
+    assert len(monthly["graphics"][0]["points"]) == len(bars)
+    last_point = monthly["graphics"][0]["points"][-1]
+    assert last_point["index"] == len(bars) - 1
+    assert abs(last_point["price"] - bars[-1]["low"] * 0.96) < 1e-9
+    assert last_point["icon"] == 11
+    assert daily["graphics"][0]["points"] == []
+
+
+def test_drawicon_rejects_types_outside_tongdaxin_range():
+    program = tdx_formula.compile_formula("DRAWICON(C>0,LOW,52);")
+    with pytest.raises(tdx_formula.TdxFormulaEvaluationError) as exc_info:
+        program.evaluate_chart(_trend_bars(5), context={"period": 5})
+    assert exc_info.value.issues[0]["code"] == "invalid_icon_type"

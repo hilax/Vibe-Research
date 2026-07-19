@@ -105,6 +105,14 @@ class QuantFormulaValidateReq(BaseModel):
     lookback_days: int = Field(250, ge=60, le=800)
 
 
+class KlineFormulaEvaluateReq(BaseModel):
+    code: str = Field(pattern=_CODE_RE)
+    category: Literal[3, 4, 5, 6] = 4
+    source: str = Field(min_length=1, max_length=100000)
+    bars: list[dict[str, Any]] = Field(min_length=1, max_length=24000)
+    rps_history: list[dict[str, Any]] = Field(default_factory=list, max_length=24000)
+
+
 def _formula_validation_detail(error: quant_formula.FormulaValidationError) -> dict:
     return {
         "code": "formula_validation_error",
@@ -733,20 +741,123 @@ def disclosure(code: str = Query(...)):
 
 
 @app.get("/api/kline")
-def kline(code: str = Query(...), category: int = Query(4), offset: int = Query(60, ge=1, le=800)):
-    """K线（需 mootdx）。category 4=日 5=周 6=月 11=60分钟。"""
+def kline(
+    code: str = Query(...),
+    category: int = Query(4),
+    offset: int = Query(60, ge=1, le=800),
+    full_history: bool = Query(False),
+):
+    """K线（需 mootdx）。3=60分钟，4=日，5=周，6=月；可分页返回全历史。"""
     code = _validate(code)
+    if category not in (3, 4, 5, 6):
+        raise HTTPException(422, "不支持的 K 线周期：仅支持 3/4/5/6")
     try:
-        return {"data": astock.kline(code, category=category, offset=offset)}
+        return {
+            "data": astock.kline(
+                code,
+                category=category,
+                offset=offset,
+                full_history=full_history,
+            )
+        }
     except astock.DependencyMissing as e:
         raise HTTPException(501, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"K线源异常：{e}") from e
 
 
+@app.get("/api/kline/formula/preset")
+def kline_formula_preset():
+    """返回 K 线主图的可编辑默认公式及当前兼容能力。"""
+    return {
+        "data": {
+            "name": "我的主图公式",
+            "syntax_version": "tdx-compatible-v2",
+            "default_source": tdx_presets.KLINE_MAIN_CHART,
+            "supported_functions": list(tdx_presets.SUPPORTED_FUNCTIONS),
+            "supported_icon_range": [1, 51],
+        }
+    }
+
+
+def _kline_formula_rps(history: list[dict[str, Any]], bars: list[dict]) -> dict:
+    """把通达信 RPS 历史按请求中的完整 K 线日期对齐。"""
+    by_date = {
+        str(point.get("trade_date") or "")[:10]: point
+        for point in history
+        if str(point.get("trade_date") or "")
+    }
+    periods = (5, 10, 15, 20, 50, 120, 250)
+    result = {f"rps{period}": [] for period in periods}
+    for bar in bars:
+        trade_date = str(bar.get("datetime") or bar.get("date") or "")[:10]
+        point = by_date.get(trade_date) or {}
+        for period in periods:
+            # 通达信外部序列未覆盖的历史位置按 0 处理。若保留 None，
+            # `IF(RPS<=87,0,1)` 会因比较结果为假而错误走到 1 分支，制造信号。
+            value = point.get(f"rps{period}")
+            result[f"rps{period}"].append(value if value is not None else 0.0)
+    return result
+
+
+@app.post("/api/kline/formula/evaluate")
+def kline_formula_evaluate(req: KlineFormulaEvaluateReq):
+    """安全执行可编辑主图公式，返回全部输出线与 DRAWICON 点位。"""
+    code = _validate(req.code)
+    normalized = req.source.replace("\r\n", "\n").strip() + "\n"
+    try:
+        program = tdx_formula.compile_formula(normalized)
+        quote_data: dict = {}
+        try:
+            quote_data = (astock.tencent_quote([code]) or {}).get(code) or {}
+        except Exception:  # noqa: BLE001 — 不使用 CAPITAL 的公式不应被实时行情拖累
+            quote_data = {}
+        turnover_pct = quote_data.get("turnover_pct")
+        capital = quant._tdx_capital_from_turnover(req.bars, turnover_pct)
+        period_by_category = {3: 4, 4: 5, 5: 6, 6: 7}
+        evaluation = program.evaluate_chart(
+            req.bars,
+            rps=_kline_formula_rps(req.rps_history, req.bars),
+            code=code,
+            capital=capital,
+            context={"period": period_by_category[req.category]},
+        )
+    except tdx_formula.TdxFormulaError as e:
+        raise HTTPException(422, detail=_tdx_formula_validation_detail(e)) from e
+
+    lines = [
+        {
+            "name": output["name"],
+            "values": output.get("series") or [],
+        }
+        for output in evaluation.get("outputs", [])
+        if output.get("name") and output.get("display") and "series" in output
+    ]
+    icons = [
+        {
+            "icon": graphic.get("icon"),
+            "points": graphic.get("points") or [],
+        }
+        for graphic in evaluation.get("graphics", [])
+        if graphic.get("function") == "DRAWICON"
+    ]
+    return {
+        "data": {
+            "formula_hash": hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12],
+            "normalized_source": normalized,
+            "required_history": program.required_history,
+            "used_functions": list(program.used_functions),
+            "period": period_by_category[req.category],
+            "bar_count": len(req.bars),
+            "lines": lines,
+            "icons": icons,
+        }
+    }
+
+
 @app.get("/api/stock/rps-history")
 def stock_rps_history(code: str = Query(...)):
-    """个股 RPS50/120/250 历史（来自全市场横截面百分位排名快照）。
+    """个股 RPS5/10/15/20/50/120/250 历史（全市场横截面百分位快照）。
 
     只读取 rps_snapshot() 的内存/磁盘缓存，不触发重建（避免冷启动阻塞）。
     缓存缺失或个股不在样本内时返回空数组，前端降级隐藏副图 RPS 折线。

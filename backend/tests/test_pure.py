@@ -54,3 +54,55 @@ def test_parse_gtimg_bad_line_ignored():
     # 字段不足 / 无引号的行应被安全跳过，不抛异常。
     assert astock._parse_gtimg("garbage;no_quotes_here;") == {}
     assert astock._parse_gtimg("") == {}
+
+
+class _FakeFrame:
+    def __init__(self, rows):
+        self.rows = rows
+        self.empty = not rows
+
+    def to_dict(self, orient):
+        assert orient == "records"
+        return list(self.rows)
+
+
+def test_kline_full_history_paginates_deduplicates_and_sorts(monkeypatch):
+    pages = {
+        0: [
+            {"datetime": "2024-01-03 15:00", "close": 3},
+            {"datetime": "2024-01-04 15:00", "close": 4},
+        ],
+        2: [
+            {"datetime": "2024-01-01 15:00", "close": 1},
+            {"datetime": "2024-01-03 15:00", "close": 3},
+        ],
+        4: [{"datetime": "2024-01-02 15:00", "close": 2}],
+    }
+    calls = []
+
+    class Client:
+        def bars(self, **kwargs):
+            calls.append(kwargs)
+            return _FakeFrame(pages.get(kwargs["start"], []))
+
+    monkeypatch.setattr(astock, "_KLINE_PAGE_SIZE", 2)
+    monkeypatch.setattr(astock, "_mootdx_client", lambda: Client())
+
+    rows = astock.kline("000001", category=4, full_history=True)
+
+    assert [row["datetime"] for row in rows] == [
+        "2024-01-01 15:00", "2024-01-02 15:00",
+        "2024-01-03 15:00", "2024-01-04 15:00",
+    ]
+    assert [call["start"] for call in calls] == [0, 2, 4]
+    assert all(call["offset"] == 2 for call in calls)
+
+
+def test_kline_full_history_empty_source(monkeypatch):
+    class Client:
+        def bars(self, **kwargs):
+            return _FakeFrame([])
+
+    monkeypatch.setattr(astock, "_mootdx_client", lambda: Client())
+
+    assert astock.kline("000001", category=4, full_history=True) == []

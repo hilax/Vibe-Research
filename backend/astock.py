@@ -363,11 +363,48 @@ def _mootdx_client():
         raise RuntimeError("通达信行情节点均不可用：" + "; ".join(errors))
 
 
-def kline(code: str, category: int = 4, offset: int = 60) -> list[dict]:
-    """K线：category 4=日 5=周 6=月 11=60分钟。"""
+_KLINE_PAGE_SIZE = 800  # 通达信协议单次请求上限
+_KLINE_MAX_PAGES = 64   # 防御异常节点无限返回重复页；足够覆盖 A 股全部历史
+
+
+def kline(
+    code: str,
+    category: int = 4,
+    offset: int = 60,
+    *,
+    full_history: bool = False,
+) -> list[dict]:
+    """K线：category 3=60分钟 4=日 5=周 6=月。
+
+    通达信协议每次最多返回 800 根。``full_history=True`` 时从 ``start=0``
+    开始按 800 根向前翻页，直到上市首根或数据源可提供的最早一根，再按时间
+    升序去重返回。60 分钟线受通达信节点留存范围限制，返回节点可提供的全量。
+    """
     client = _mootdx_client()
-    df = client.bars(symbol=code, frequency=category, offset=offset)
-    return df.to_dict("records") if df is not None and not df.empty else []
+    if not full_history:
+        df = client.bars(symbol=code, frequency=category, offset=offset)
+        return df.to_dict("records") if df is not None and not df.empty else []
+
+    records_by_time: dict[str, dict] = {}
+    for page in range(_KLINE_MAX_PAGES):
+        df = client.bars(
+            symbol=code,
+            frequency=category,
+            start=page * _KLINE_PAGE_SIZE,
+            offset=_KLINE_PAGE_SIZE,
+        )
+        if df is None or df.empty:
+            break
+        page_records = df.to_dict("records")
+        before = len(records_by_time)
+        for index, row in enumerate(page_records):
+            # mootdx 行情始终带 datetime；兜底键避免异常节点缺字段时互相覆盖。
+            key = str(row.get("datetime") or f"page-{page}-row-{index}")
+            records_by_time[key] = row
+        if len(page_records) < _KLINE_PAGE_SIZE or len(records_by_time) == before:
+            break
+
+    return [records_by_time[key] for key in sorted(records_by_time)]
 
 
 def finance(code: str) -> dict:

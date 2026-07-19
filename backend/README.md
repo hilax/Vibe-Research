@@ -30,7 +30,9 @@ python3 -m venv .venv
 | `GET /api/reports?code=600519` | 个股研报列表（含 PDF 链接） | requests |
 | `GET /api/announcements?code=600519` | 近期公告（东财） | requests |
 | `GET /api/news?code=600519` | 个股新闻 | akshare |
-| `GET /api/kline?code=600519` | K线 | mootdx |
+| `GET /api/kline?code=600519&category=4&full_history=true` | K线；3=60分钟、4=日、5=周、6=月；`full_history=true` 分页回溯全历史 | mootdx |
+| `GET /api/kline/formula/preset` | 可编辑 K 线主图的默认通达信公式与兼容能力 | — |
+| `POST /api/kline/formula/evaluate` | 安全执行主图公式；返回冒号输出线的完整序列与 `DRAWICON` 点位 | stdlib |
 | `GET /api/finance?code=600519` | 季报财务快照（mootdx，前端未用 / 备用） | mootdx |
 | **资金面·筹码·信号（v3.3）** | `/api/margin` · `/block-trade` · `/holders` · `/dividend` · `/fund-flow` · `/dragon-tiger` · `/lockup` · `/blocks` · `/hot-concepts` · `/investor-qa` · `/industry` | requests |
 | `GET /api/market/overview` · `/api/radar` | 市场情绪+板块资金 · 资讯雷达 | akshare / stdlib |

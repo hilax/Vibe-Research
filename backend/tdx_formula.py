@@ -190,6 +190,18 @@ def _tokenize(source: str) -> list[Token]:
             start = index
             while index < len(source):
                 current = source[index]
+                # 通达信用“指标名.输出线名”引用系统指标，例如 DMI.PDI。
+                # 这里只把两侧均为标识符的点号收进 IDENT；其它点号仍会在
+                # 词法阶段被拒绝，因此不会扩大到属性访问或任意 Python 语法。
+                if (
+                    current == "."
+                    and index > start
+                    and index + 1 < len(source)
+                    and (source[index + 1] == "_" or source[index + 1].isalpha())
+                ):
+                    advance(current)
+                    index += 1
+                    continue
                 if current != "_" and not current.isalnum():
                     break
                 advance(current)
@@ -481,7 +493,7 @@ _FUNCTION_ARITY: dict[str, int] = {
 
 _BASE_NAMES = {
     "C", "CLOSE", "H", "HIGH", "L", "LOW", "VOL", "VOLUME", "CAPITAL",
-    "V", "O", "OPEN", "TRUE", "FALSE",
+    "V", "O", "OPEN", "TRUE", "FALSE", "PERIOD", "DMI.PDI",
 }
 
 
@@ -655,6 +667,34 @@ class Program:
             code=code,
             capital=capital,
             context=context,
+            include_series=False,
+        ).run()
+
+    def evaluate_chart(
+        self,
+        bars: list[dict],
+        *,
+        rps: dict | None = None,
+        financial: dict | None = None,
+        code: str = "",
+        capital: float | list[float] | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Evaluate the formula and retain complete drawable output series.
+
+        The ordinary :meth:`evaluate` path intentionally returns only last values
+        for high-throughput stock screening.  K-line charts opt into this method so
+        displayed assignments and DRAWICON calls preserve one value per input bar.
+        """
+        return _Evaluator(
+            self,
+            bars,
+            rps=rps,
+            financial=financial,
+            code=code,
+            capital=capital,
+            context=context,
+            include_series=True,
         ).run()
 
 
@@ -800,6 +840,7 @@ class _Evaluator:
         code: str,
         capital: float | list[float] | None,
         context: dict | None,
+        include_series: bool,
     ) -> None:
         if not isinstance(bars, list) or not bars:
             raise TdxFormulaEvaluationError("bars 必须是非空数组", code="invalid_bars")
@@ -809,6 +850,7 @@ class _Evaluator:
         self.bars = bars
         self.size = len(bars)
         self.context = dict(context or {})
+        self.include_series = include_series
         self.rps = dict(rps or self.context.get("rps") or {})
         self.financial = dict(financial or self.context.get("financial") or {})
         self.code = str(code or self.context.get("code") or "")
@@ -875,6 +917,50 @@ class _Evaluator:
             self.env["CAPITAL"] = capital_values
         self.env["TRUE"] = [True] * self.size
         self.env["FALSE"] = [False] * self.size
+        period = _finite_number(self.context.get("period", 5))
+        if period is None or int(period) != period or not 0 <= int(period) <= 13:
+            raise TdxFormulaEvaluationError(
+                "PERIOD 周期类型必须是 0 到 13 的整数", code="invalid_context",
+            )
+        self.env["PERIOD"] = [int(period)] * self.size
+
+        # DMI.PDI 使用通达信系统指标的默认 N=14。实现采用其标准公式：
+        # TR、正向动向按 N 周期求和，再计算 DMP*100/MTR。
+        if all(name in self.env for name in ("H", "L", "C")):
+            highs = self.env["H"]
+            lows = self.env["L"]
+            closes = self.env["C"]
+            tr_values: list[float] = []
+            dmp_values: list[float] = []
+            for index in range(self.size):
+                high = float(highs[index])
+                low = float(lows[index])
+                if index == 0:
+                    tr_values.append(0.0)
+                    dmp_values.append(0.0)
+                    continue
+                previous_close = float(closes[index - 1])
+                previous_high = float(highs[index - 1])
+                previous_low = float(lows[index - 1])
+                tr_values.append(max(
+                    high - low,
+                    abs(high - previous_close),
+                    abs(low - previous_close),
+                ))
+                hd = high - previous_high
+                ld = previous_low - low
+                dmp_values.append(hd if hd > 0 and hd > ld else 0.0)
+            pdi: list[float] = []
+            tr_sum = 0.0
+            dmp_sum = 0.0
+            for index, (tr_value, dmp_value) in enumerate(zip(tr_values, dmp_values)):
+                tr_sum += tr_value
+                dmp_sum += dmp_value
+                if index >= 14:
+                    tr_sum -= tr_values[index - 14]
+                    dmp_sum -= dmp_values[index - 14]
+                pdi.append(dmp_sum * 100 / tr_sum if tr_sum > 0 else 0.0)
+            self.env["DMI.PDI"] = pdi
 
         datetimes = [str(bar.get("datetime") or bar.get("date") or "") for bar in self.bars]
         if all(datetimes) and any(current <= previous for previous, current in zip(datetimes, datetimes[1:])):
@@ -892,11 +978,16 @@ class _Evaluator:
                 self.env[canonical] = final_series
                 self.variable_names.append((canonical, statement.name))
                 if statement.display:
-                    self.outputs.append({
+                    output = {
                         "name": statement.name,
                         "value": _last(final_series),
                         "display": True,
-                    })
+                    }
+                    if self.include_series:
+                        output["series"] = [
+                            _finite_number(value) for value in final_series
+                        ]
+                    self.outputs.append(output)
             else:
                 self.outputs.append({"name": None, "value": _last(final_series), "display": True})
         assert final_series is not None
@@ -918,7 +1009,12 @@ class _Evaluator:
 
     def _evaluate(self, expression: Expr) -> list[Any]:
         cache_key = _expression_key(expression)
-        cached = self.expression_cache.get(cache_key)
+        # DRAWICON has the deliberate side effect of registering a graphic layer;
+        # identical calls must therefore not disappear through expression caching.
+        cacheable = not (
+            isinstance(expression, Call) and _canon(expression.name) == "DRAWICON"
+        )
+        cached = self.expression_cache.get(cache_key) if cacheable else None
         if cached is not None:
             return cached
         if isinstance(expression, Literal):
@@ -957,7 +1053,8 @@ class _Evaluator:
             result = self._call(expression)
         else:
             raise AssertionError(type(expression))
-        self.expression_cache[cache_key] = result
+        if cacheable:
+            self.expression_cache[cache_key] = result
         return result
 
     def _binary(self, expression: Binary) -> list[Any]:
@@ -1042,12 +1139,32 @@ class _Evaluator:
             return self._bars_since_n(arguments[0], arguments[1], expression)
         if name == "DRAWICON":
             conditions = [_truth(value) for value in arguments[0]]
-            self.graphics.append({
+            icons: list[int | None] = []
+            for value in arguments[2]:
+                number = _finite_number(value)
+                if number is None or int(number) != number or not 1 <= int(number) <= 51:
+                    raise TdxFormulaEvaluationError(
+                        "DRAWICON 图标编号必须是 1 到 51 的整数",
+                        code="invalid_icon_type",
+                        line=expression.line,
+                        column=expression.column,
+                    )
+                icons.append(int(number))
+            graphic = {
                 "function": "DRAWICON",
                 "condition": conditions[-1],
                 "price": _last(arguments[1]),
-                "icon": _last(arguments[2]),
-            })
+                "icon": icons[-1],
+            }
+            if self.include_series:
+                graphic["points"] = [
+                    {"index": index, "price": price, "icon": icon}
+                    for index, (condition, raw_price, icon) in enumerate(
+                        zip(conditions, arguments[1], icons)
+                    )
+                    if condition and (price := _finite_number(raw_price)) is not None
+                ]
+            self.graphics.append(graphic)
             return conditions
         raise AssertionError(name)
 

@@ -105,12 +105,12 @@ export function StockData() {
   const [kcode, setKcode] = useState("");
   const runIdRef = useRef(0);
   // 自动跳转支持：run() 通过 ref 暴露给 ?code= effect，避免依赖循环。
-  const runRef = useRef<() => void>(() => {});
+  const runRef = useRef<(targetCode?: string) => Promise<void>>(async () => {});
   const [searchParams, setSearchParams] = useSearchParams();
   const lastQueryCodeRef = useRef("");
 
-  const run = async () => {
-    const c = code.trim().toUpperCase();
+  const run = async (targetCode = code) => {
+    const c = targetCode.trim().toUpperCase();
     if (!c) { setErr("请输入代码"); return; }
     const rid = ++runIdRef.current;
     lastQueryCodeRef.current = c;
@@ -184,8 +184,7 @@ export function StockData() {
     if (!q) return;
     if (q === lastQueryCodeRef.current) return; // 防止与刚刚同步入 URL 的目标重复触发
     setCode(q);
-    // 状态更新异步，等下一帧再调用 run，让 setCode 反映在闭包里。
-    queueMicrotask(() => runRef.current());
+    void runRef.current(q);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -221,7 +220,7 @@ export function StockData() {
     <div>
       <PageHeader
         title="个股数据"
-        subtitle="K 线（含 4 套通达信公式信号）· 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
+        subtitle="K 线（含 5 套通达信公式信号）· 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
         actions={(val || gstock) && (
           <AskAiButton
             context={gstock ? gAiContext : aiContext}
@@ -238,12 +237,14 @@ export function StockData() {
         <input
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.]/g, "").toUpperCase().slice(0, 12))}
-          onKeyDown={(e) => e.key === "Enter" && run()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void run();
+          }}
           placeholder="A 股 6 位代码，或美股/港股/韩股（AAPL / 00700 / 005930.KS）"
           className="w-80 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
         />
         <button
-          onClick={run}
+          onClick={() => void run()}
           disabled={loading}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25 disabled:opacity-50"
         >
@@ -343,7 +344,7 @@ export function StockData() {
             )}
           </GlassCard>
 
-          {/* K 线主图（A 股）：含 4 套通达信公式信号（金手指 / 顺向火车轨 / 蓝钻 / 月线反转 / 小黄人）。 */}
+          {/* K 线主图（A 股）：含 5 套通达信公式信号（金手指 / 顺向火车轨 / 蓝钻 / 月线反转 / 小黄人）。 */}
           {kcode && <KlineCard key={kcode} code={kcode} name={val.name} />}
 
           {/* 财报速览（结论先行摘要，借鉴 equity-research 的结构纪律，剔除评级/目标价） */}
