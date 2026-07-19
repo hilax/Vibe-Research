@@ -6,7 +6,10 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import { sectorTagIcons, sectorTagFallbackIcon } from "@/components/sector/iconMap";
 import { TagContentView } from "@/components/sector/TagContentView";
 import { BIOPHARMA_AS_OF } from "@/data/biopharma";
+import { RESEARCH_AS_OF } from "@/data/research";
 import { sectorsData } from "@/data/sectors";
+
+const RESEARCH_SECTOR_KEYS = new Set(["ai-computing", "hbm", "cpo", "business-space"]);
 
 // 针对性建议放在页面顶部就近维护，避免通用 AI 入口失去板块上下文。
 const SUGGESTIONS_BY_TAG: Record<string, string[]> = {
@@ -101,7 +104,14 @@ export function SectorTagDetail() {
   const TagIcon = sectorTagIcons[tag.icon] ?? sectorTagFallbackIcon;
   const suggestions = sector.key === "ai-pharma"
     ? BIOPHARMA_SUGGESTIONS[tag.key] ?? []
-    : SUGGESTIONS_BY_TAG[tag.key] ?? [];
+    : RESEARCH_SECTOR_KEYS.has(sector.key)
+      ? [
+          `用真实需求到财务兑现的证据链复核「${tag.label}」`,
+          `列出「${tag.label}」当前已验证和待验证的数据`,
+          `把「${tag.label}」的技术、客户、产能和财务证据分开`,
+          `未来12个月「${tag.label}」最应跟踪哪些催化剂和风险`,
+        ]
+      : SUGGESTIONS_BY_TAG[tag.key] ?? [];
 
   const aiContextParts = [
     `板块：${sector.label}`,
@@ -167,6 +177,10 @@ export function SectorTagDetail() {
       {sector.key === "ai-pharma" ? (
         <p className="mb-5 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
           研究底稿与表格统一截至 {BIOPHARMA_AS_OF}；临床阶段按具体适应症记录，来源见各页底部，无法从可靠公开资料确认的字段保留为空或标记“待验证”。
+        </p>
+      ) : RESEARCH_SECTOR_KEYS.has(sector.key) ? (
+        <p className="mb-5 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          研究底稿与结构化卡片统一截至 {RESEARCH_AS_OF}；事实、公司口径、机构预测和系统情景分开展示，送样不等于认证，扩产不等于收入，缺少可靠公开数据的字段保持空白或标记“待验证”。
         </p>
       ) : null}
 

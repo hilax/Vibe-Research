@@ -1,0 +1,1 @@
+export { aiComputingSector } from "./sector";

@@ -1,0 +1,302 @@
+import { sourceItems } from "@/data/research";
+import type { ContentBlock, Sector } from "@/data/sectors";
+
+const sources = (ids: string[]): ContentBlock => ({ type: "sources", items: sourceItems(ids) });
+
+const overview: ContentBlock[] = [
+  { type: "heading", text: "1. 一句话定性" },
+  { type: "lead", text: "AI算力不是单独的一颗GPU，而是计算芯片＋高带宽内存＋先进封装＋服务器/机柜＋芯片间互联＋集群网络＋存储＋电源液冷＋软件生态＋数据中心基础设施共同组成的系统工程。单芯片理论算力高，不等于集群实际性能高。" },
+  { type: "paragraph", text: "普通投资者可以把它理解成一座工厂：芯片是机器，HBM是贴身原料仓，网络是传送带，电力和液冷让机器持续运行，软件负责排产。研究重点不是峰值FLOPS，而是内存带宽、通信、软件适配、持续功耗、系统交付、集群利用率与单位有效算力成本。" },
+  { type: "heading", text: "2. 训练算力和推理算力：同一硬件，约束不同" },
+  { type: "table", headers: ["负载", "任务", "精度/显存", "互联/延迟", "吞吐/功耗", "研究边界"], rows: [
+    ["预训练", "从大规模数据学习参数", "常用BF16/FP8等；容量与带宽高", "大规模集体通信，带宽和网络稳定性关键", "追求长时间高MFU", "芯片、HBM、NVLink类互联和scale-out共同决定"],
+    ["后训练", "监督微调、RLHF/RL等", "模型/优化器状态与采样并存", "训练与推理阶段交替", "调度和数据生成影响利用率", "不能简单按预训练GPU时复制"],
+    ["微调", "面向任务适配", "可用LoRA/低精度降低显存", "集群规模通常较小", "成本与开发效率重要", "通用GPU生态常更占优"],
+    ["在线推理", "实时请求和Agent", "KV Cache容量、低精度和长上下文关键", "首Token延迟和尾延迟关键", "每Token成本、并发和能效", "峰值训练算力不能直接代表体验"],
+    ["离线推理", "批处理、数据合成", "可做大批量和激进量化", "对实时延迟不敏感", "吞吐/成本优先", "ASIC或高利用率GPU均可能有优势"],
+    ["边缘推理", "终端本地运行", "容量和模型压缩约束强", "低延迟、低带宽依赖", "功耗/散热严格", "数据中心训练优势不能直接套用"],
+  ], note: "计算精度、模型结构、批量、上下文长度和服务等级会改变结论，表中是工程约束而非统一配置。" },
+  { type: "heading", text: "3. 为什么当前值得研究：需求要追到资本开支和利用率" },
+  { type: "theses", items: [
+    { title: "资本开支仍在上行", body: "Alphabet披露2025年CapEx为914亿美元，其中约60%服务器、40%数据中心和网络，并给出2026年1,750亿—1,850亿美元指引。指引是需求线索，不是供应商订单。" },
+    { title: "从单卡走向机架系统", body: "GB300 NVL72、AMD开放128-GPU机架与Google Ironwood Pod均说明算力竞争已扩展到机架/Pod、互联、网络、液冷和软件协同。" },
+    { title: "效率成为第二条需求曲线", body: "Google披露2025年通过模型、效率和利用率优化降低Gemini serving单位成本78%。这说明硬件采购量和有效Token产出必须分开。" },
+  ] },
+  { type: "callout", tone: "warn", text: "国产算力研究也必须遵循同一证据链：软件适配、整机验证、客户采购、数据中心上电和收入确认缺一不可；“支持某生态”或“完成适配”不能直接等同于批量订单。" },
+  { type: "heading", text: "4. 系统产业地图" },
+  { type: "supply-chain", title: "从晶圆到有效算力产出", items: [
+    { eyebrow: "制造", title: "晶圆＋先进封装", text: "先进逻辑、HBM、Base Die、中介层、基板、2.5D/3D封装和测试。" },
+    { eyebrow: "计算", title: "GPU/ASIC/CPU/DPU/NIC", text: "计算、主机、卸载、网络与交换芯片形成异构系统。", highlight: true },
+    { eyebrow: "系统", title: "服务器＋网络＋存储", text: "PCB、连接器、铜缆、光模块、交换机、SSD和机架级集成。" },
+    { eyebrow: "运营", title: "电力液冷＋数据中心＋云", text: "上电、验收、调度、租赁和模型服务最终转为利用率与现金流。" },
+  ], conclusion: "研究链条必须从真实负载一路追到上电、利用率、收入和利润，任一上游扩产都不能单独代表最终可交付算力。" },
+  { type: "kv", items: [
+    { term: "晶圆与封装", value: "晶圆制造 → 先进封装 → GPU/ASIC/CPU/DPU/NIC/交换芯片" },
+    { term: "内存与板级", value: "HBM/DDR → PCB/连接器/高速铜互联 → 服务器和机柜" },
+    { term: "网络与存储", value: "光模块/光互联 → 交换机/网络 → 高性能存储" },
+    { term: "基础设施", value: "电源/液冷/配电 → 数据中心 → 云服务/算力租赁" },
+    { term: "最终产出", value: "模型训练、后训练、推理和应用；以有效吞吐、服务质量和单位成本衡量" },
+  ] },
+  { type: "heading", text: "5. 四种收益来源与风险" },
+  { type: "table", headers: ["收益来源", "验证指标", "常见误读", "主要风险"], rows: [
+    ["产品代际升级", "新代际量产、客户换代、ASP/毛利", "发布即替换全部存量", "延期、路线切换、兼容性"],
+    ["单机/单柜价值量", "单柜芯片/HBM/网络/电源液冷BOM", "用一套BOM代表所有平台", "降本、集成、供应商议价"],
+    ["出货量/份额", "认证、采购、批量交付和份额", "送样/合作协议=份额", "客户自研、第二供应商、价格竞争"],
+    ["利用率/服务盈利", "上电、验收、MFU、Token成本、租赁率、现金流", "买硬件=有效产出", "资本开支下降、利用率不足、折旧压力"],
+  ], note: "同时跟踪功耗/散热限制、供应瓶颈、交付、客户集中、估值透支与出口/监管风险。" },
+  { type: "heading", text: "6. 后续研究导航" },
+  { type: "kv", items: [
+    { term: "算力芯片与架构", value: "比较GPU、ASIC、CPU/DPU/NIC，并把Chiplet与封装约束放进芯片判断。" },
+    { term: "服务器与集群", value: "从单卡追到机架、上电、验收和利用率，分别拆各平台BOM。" },
+    { term: "网络与互联", value: "区分芯片内、机内、柜内、柜间和DCI，不把不同层协议当替代品。" },
+    { term: "数据中心基础设施", value: "追电网接入、配电、UPS、机柜电源、冷板/CDU和PUE。" },
+    { term: "软件生态与算力效率", value: "用编译器、通信库、调度和MFU/Token成本衡量硬件可调用程度。" },
+    { term: "产业链与公司", value: "按客户、认证、订单、产能和财务证据映射全球与中国上市公司。" },
+    { term: "确定性地图", value: "客户CapEx→订单→备货→交付→上电→验收→利用率→财务兑现。" },
+  ] },
+  { type: "sector-links", title: "独立一级板块（只维护一份明细）", items: [
+    { label: "进入HBM板块", to: "/sectors/hbm/overview", description: "查看产品代际、制造封装、设备材料、认证、产能和中国供应链；本页不重复维护。" },
+    { label: "进入光互联板块", to: "/sectors/cpo/overview", description: "查看800G/1.6T/3.2T、LPO/LRO/CPO、器件BOM、制造卡口与订单；本页只说明系统位置。" },
+  ] },
+  sources(["alphabet-2025-q4", "nvidia-blackwell", "nvidia-gb300-nvl72", "amd-ai-2025", "google-ironwood-2026"]),
+];
+
+const chips: ContentBlock[] = [
+  { type: "heading", text: "1. 芯片分类：不是都在做同一件事" },
+  { type: "table", headers: ["类型", "主要用途", "优势", "局限/成本", "训练/推理", "生态与主要厂商"], rows: [
+    ["GPU", "高度并行的训练和推理", "通用、生态成熟、工作负载覆盖广", "芯片/HBM/系统成本高，供电散热复杂", "两者均可", "CUDA/NVIDIA；ROCm/AMD；其他GPU生态"],
+    ["通用CPU", "主机、预处理、控制和部分推理", "通用软件与串行/分支任务", "矩阵计算能效低于专用加速器", "小模型推理/系统控制", "x86与Arm；Intel、AMD、Ampere及云自研"],
+    ["AI ASIC", "固定或较稳定AI负载", "性能功耗比、TCO和供应链可控", "开发周期/前置投入高，通用性和生态有限", "大客户训练/推理均可能", "Google TPU、AWS Trainium/Inferentia及其他云自研"],
+    ["FPGA", "协议、低时延和可重构加速", "上市后可重配置", "单位算力成本/能效常不及成熟ASIC", "特定推理/网络", "AMD Xilinx、Intel PSG等"],
+    ["DPU", "网络、存储、安全卸载", "释放CPU、隔离多租户", "依赖软硬件协同", "支撑训练/推理系统", "NVIDIA BlueField、AMD Pensando等"],
+    ["SmartNIC", "网络传输、拥塞/安全卸载", "降低主机开销、改善网络可预测性", "编程和运维复杂", "支撑集群", "云厂商、Broadcom/NVIDIA/AMD等"],
+    ["交换芯片", "构建scale-up/scale-out网络", "端口密度、带宽、拥塞控制", "SerDes、功耗和光电I/O约束", "支撑集群", "Broadcom、NVIDIA、Marvell等"],
+    ["边缘AI芯片", "终端/工业/汽车本地推理", "低功耗、低延迟、隐私", "内存与模型规模受限", "推理", "手机/汽车/MCU/SoC生态"],
+  ] },
+  { type: "heading", text: "2. GPU与ASIC：适用边界，而不是谁消灭谁" },
+  { type: "table", headers: ["判断维度", "GPU更占优的情形", "云厂商自研ASIC更占优的情形"], rows: [
+    ["工作负载", "模型/算子快速变化、客户多样", "负载规模大且相对稳定"],
+    ["编程生态", "需要成熟框架、工具、第三方库和人才", "客户能控制编译器、框架和模型栈"],
+    ["开发周期", "快速部署、避免流片风险", "能承受多年研发和验证"],
+    ["性能功耗/TCO", "用通用性换取高利用率和开发效率", "规模足够摊薄NRE并针对负载优化"],
+    ["采购/供应链", "标准化产品与广泛OEM/云生态", "超大客户以自用量支撑芯片和系统供应链"],
+    ["风险", "供应集中、溢价和锁定", "设计失败、代际落后、软件迁移和产能协调"],
+  ], note: "TCO必须同时含芯片、HBM、服务器、网络、电力液冷、软件迁移、故障和利用率；不能只比较理论FLOPS或采购价。" },
+  { type: "heading", text: "3. Chiplet与先进封装：架构被封装能力约束" },
+  { type: "kv", items: [
+    { term: "单Die", value: "设计和软件一致性较好，但受reticle、良率、功耗与制造成本约束。" },
+    { term: "Chiplet", value: "把计算、I/O、缓存或其他功能拆成小芯粒，允许异构工艺，但增加Die-to-Die、封装和测试复杂度。" },
+    { term: "2.5D封装", value: "GPU/ASIC与HBM通过硅中介层或桥接互联；中介层面积、基板、翘曲、散热和封装设备决定可制造性。" },
+    { term: "3D/混合键合", value: "垂直堆叠缩短互联并提高密度；对表面洁净、对准、已知良Die、热和可测试性要求更高。" },
+    { term: "全球硬卡口", value: "先进逻辑/DRAM工艺、HBM量产、领先2.5D/3D封装、先进封装设备与部分材料/基板；需逐项看供应集中和客户认证。" },
+    { term: "国产替代", value: "设备适配国内产线可以形成国内份额机会，但不等同于进入全球HBM/GPU量产供应链。" },
+  ] },
+  { type: "table", headers: ["设备/材料/工艺", "为何影响产能", "必须追踪"], rows: [
+    ["中介层/桥接与RDL", "大尺寸互联密度和良率", "晶圆尺寸、层数、缺陷与有效产出"],
+    ["先进封装基板", "层数、翘曲和高频损耗", "供应商认证、交期、良率"],
+    ["键合/临时键合/解键合", "薄Die堆叠精度和翘曲", "设备装机、节拍、返工与量产案例"],
+    ["测试/探针", "Known Good Die避免封装后整体报废", "覆盖率、并行度、测试时间和失效定位"],
+    ["散热材料/结构", "热密度决定持续频率与可靠性", "热阻、泵功耗、长期兼容和维护"],
+  ] },
+  { type: "heading", text: "4. 六层芯片价值判断" },
+  { type: "list", ordered: true, items: ["工作负载是否真实存在，且客户愿意付费", "芯片性能是否能被编译器、算子库和框架调用", "HBM容量/带宽和芯片间互联是否匹配", "服务器、网络、供电与液冷能否规模交付", "客户是否完成验证、采购、上电和验收", "产品级收入、毛利、库存、应收和现金流是否兑现"] },
+  { type: "research-assets", title: "算力资产卡工作台", sector: "ai-computing", recordType: "ai-asset" },
+  sources(["nvidia-blackwell", "amd-ai-2025", "google-ironwood-2026", "micron-2025-10k", "naura-2025-ar"]),
+];
+
+const servers: ContentBlock[] = [
+  { type: "heading", text: "1. 从单卡到大规模集群" },
+  { type: "table", headers: ["层级", "新增能力", "主要瓶颈", "交付证据"], rows: [
+    ["单卡", "单加速器计算+HBM", "芯片、HBM、封装、板级供电", "卡级测试/出货"],
+    ["单机", "4/8等多卡、CPU、NIC、存储", "机内互联、PCB、电源和风/液冷", "整机认证/交付"],
+    ["多机", "通过网络扩展计算", "NIC、交换、拥塞、集体通信", "小集群benchmark"],
+    ["机柜", "机架级NVLink/开放scale-up域", "铜互联、母线、CDU、机柜功率", "整柜交付/上电"],
+    ["机架级系统", "CPU/GPU/交换/电源液冷共设计", "供应链同步和现场集成", "客户验收"],
+    ["大规模集群", "多柜/多Pod统一训练推理", "scale-out网络、存储、调度和故障", "实际利用率/MFU/服务收入"],
+  ] },
+  { type: "heading", text: "2. Scale-up与Scale-out" },
+  { type: "table", headers: ["维度", "Scale-up", "Scale-out"], rows: [
+    ["解决问题", "在较紧耦合域内让多个加速器像更大系统协同", "把多个服务器/机架/Pod连成更大集群"],
+    ["典型互联", "NVLink类专用互联、Infinity Fabric、开放scale-up、短距铜/光", "InfiniBand或Ethernet/RoCE，通常需要NIC和多层交换"],
+    ["位置", "芯片/板/服务器/机柜内为主，也可跨柜", "机柜间、数据中心内和跨数据中心"],
+    ["铜光边界", "短距离优先铜以降低成本/时延，密度和距离上升推动光", "距离和端口密度通常更早采用光"],
+    ["研究指标", "带宽、延迟、一致性、域规模、功耗", "拓扑、拥塞、丢包、容错、每比特成本与功耗"],
+  ] },
+  { type: "heading", text: "3. 服务器与机柜BOM：按架构分表" },
+  { type: "table", caption: "典型8-GPU服务器（结构示意，不填无公开价值量）", headers: ["BOM", "典型构成", "用量/价值口径", "路线变量"], rows: [
+    ["加速卡/模组", "8 GPU+HBM+基板/载板", "按平台数据表", "OAM/SXM/PCIe等"],
+    ["主板/PCB", "CPU、内存、BMC、高多层板", "层数/材料按客户", "x86/Arm、板级拓扑"],
+    ["电源/BBU", "PSU、备电、VRM", "整机功率决定", "AC/DC、DC busbar"],
+    ["互联", "NVLink类、PCIe、NIC、铜缆/连接器", "端口与拓扑决定", "专用互联/开放以太网"],
+    ["散热", "风冷或冷板、歧管、快接", "芯片TDP/覆盖决定", "风液混合或全液冷"],
+  ], note: "不同GPU/ASIC平台芯片数量、内存、NIC和冷却不同，不用该表做统一价值量乘法。" },
+  { type: "table", caption: "72/128-GPU机架级系统（结构示意）", headers: ["BOM", "GB300 NVL72类", "开放128-GPU类", "跟踪证据"], rows: [
+    ["计算", "72 GPU+36 Grace CPU", "最高128 MI350系列GPU+EPYC", "实际交付配置"],
+    ["Scale-up", "NVLink Switch trays", "Infinity Fabric/开放scale-up设计", "域规模与互联带宽"],
+    ["Scale-out", "Spectrum-X/IB等选项", "Pensando/UEC-ready Ethernet", "NIC/交换层/光铜比例"],
+    ["电力", "整柜DC供电/母线等", "OCP机架电源架构", "现场配电、BBU、功率"],
+    ["液冷", "整柜液冷", "MI355X等直接液冷", "冷板/CDU/泵阀/快接/漏液"],
+  ], note: "只列官方结构差异；单柜价值量、供应商份额和交付数无可靠公开数据时保留为空。" },
+  { type: "heading", text: "4. 交付确定性：发布后还有九步" },
+  { type: "supply-chain", title: "从产品到收入", items: [
+    { eyebrow: "研发", title: "发布→样机", text: "规格和演示成立，但供应链可能未冻结。" },
+    { eyebrow: "客户", title: "验证→小批量", text: "功能、可靠性、软件、网络和现场适配逐项通过。" },
+    { eyebrow: "交付", title: "批量→上电→验收", text: "机柜进场不等于验收，电力液冷与网络必须同时就绪。", highlight: true },
+    { eyebrow: "运营", title: "运行→利用率→收入", text: "故障、调度和软件决定有效产出；最后看会计确认与现金回款。" },
+  ], conclusion: "产品发布不等于形成收入；服务器发货也不等于数据中心已经上电并产生可计费算力。" },
+  sources(["nvidia-gb300-nvl72", "amd-ai-2025", "google-ironwood-2026"]),
+];
+
+const network: ContentBlock[] = [
+  { type: "heading", text: "1. 网络分层：先定位距离与层级" },
+  { type: "table", headers: ["层级", "典型对象", "主要介质/协议", "研究边界"], rows: [
+    ["芯片内", "NoC、缓存/计算单元", "片上互联", "不与以太网直接替代"],
+    ["芯片间", "同封装Chiplet/GPU间", "Die-to-Die、UCIe、NVLink类", "封装内/短距"],
+    ["服务器内", "CPU-GPU/NIC/SSD", "PCIe/CXL/专用互联/PCB", "一致性与I/O"],
+    ["机柜内", "GPU tray、交换tray", "高速铜、专用scale-up、部分光", "距离短但带宽密度高"],
+    ["机柜间", "服务器/机架到交换机", "Ethernet/RoCE、InfiniBand、DAC/AEC/光", "拓扑和距离决定铜光比"],
+    ["数据中心间", "跨园区/城域DCI", "相干光、以太网/IP/传送", "距离、时延和容量"],
+  ] },
+  { type: "heading", text: "2. 主要技术和协议：不同层级不能直接做替代" },
+  { type: "table", headers: ["技术", "应用范围", "优势", "局限/与其他技术关系"], rows: [
+    ["PCIe", "CPU、GPU、NIC、SSD I/O", "通用生态", "不是大集群网络协议"],
+    ["UCIe", "封装内Die-to-Die", "开放Chiplet接口", "与以太网/IB处于不同层"],
+    ["NVLink类", "GPU紧耦合scale-up", "高带宽低延迟", "专用生态、域规模与成本"],
+    ["CXL", "CPU/加速器/内存一致性与池化", "基于PCIe物理层形成内存语义", "不替代所有网络"],
+    ["InfiniBand", "HPC/AI后端网络", "成熟RDMA、拥塞和集体通信", "供应生态相对集中"],
+    ["Ethernet", "前端、后端、存储和DCI", "开放、广泛生态", "AI后端需RoCE/UEC等拥塞与传输增强"],
+    ["RoCE", "以太网上RDMA", "低CPU开销和低延迟", "网络配置与拥塞控制复杂"],
+    ["铜/光", "物理传输介质", "铜适合短距成本/时延，光适合距离/密度", "不是协议本身"],
+  ] },
+  { type: "heading", text: "3. 网络性能指标" },
+  { type: "kv", items: [
+    { term: "带宽", value: "链路和双向总量只是上限，还要看过订阅、拓扑和有效吞吐。" },
+    { term: "延迟", value: "平均值之外要看尾延迟；集体通信中的慢节点会拖累整个训练任务。" },
+    { term: "拥塞/丢包", value: "突发incast、队列与路径不均会造成重传和GPU空等。" },
+    { term: "拓扑", value: "Leaf-Spine/Fat Tree/Rail Optimized等决定交换层数、端口、路径和光模块数量。" },
+    { term: "集体通信", value: "All-Reduce/All-to-All等模式决定数据移动；MoE常提高全对全通信压力。" },
+    { term: "利用率", value: "看端口/网络有效利用率和通信占比，不以标称速率替代。" },
+    { term: "每比特功耗/成本", value: "速率升级必须同时衡量交换、NIC、DSP、光电转换、冷却和维护。" },
+  ] },
+  { type: "heading", text: "4. 对产业链的影响" },
+  { type: "table", headers: ["架构变化", "交换芯片/NIC", "交换机/网络软件", "DSP/光模块/铜缆", "PCB/连接器/时钟"], rows: [
+    ["规模扩大", "端口/总交换容量和拥塞能力上升", "交换层数与运维复杂度上升", "链路数增加但铜光比由距离决定", "高速损耗与时钟抖动要求提高"],
+    ["200G/lane", "SerDes升级", "1.6T端口平台", "DSP/Driver/TIA/光芯片升级，短距铜挑战增大", "材料、连接器和测试升级"],
+    ["scale-up开放化", "专用/以太网方案竞争", "域内低延迟调度", "更短距离可能先铜后光", "高密度连接和供电"],
+    ["CPO/LPO", "主机SerDes与光引擎协同", "维护和遥测改变", "DSP价值迁移/减少，外置光源和封装增加", "板级电路径缩短、封装复杂度上升"],
+  ] },
+  { type: "sector-links", title: "光模块详细路线只在独立板块维护", items: [{ label: "查看光互联研究", to: "/sectors/cpo/ai-network", description: "网络拓扑、数量测算、速率代际、LPO/LRO/CPO、BOM和公司订单均在光互联板块持续更新。" }] },
+  sources(["broadcom-th6-2025", "ethernet-roadmap-2026", "oif-current-2026", "ieee-8023dj-2025"]),
+];
+
+const infrastructure: ContentBlock[] = [
+  { type: "heading", text: "1. 电力链条" },
+  { type: "supply-chain", title: "电从电网到芯片", items: [
+    { eyebrow: "接入", title: "电网→变压器", text: "项目先受接网容量、建设周期和土地/许可约束。" },
+    { eyebrow: "配电", title: "高低压配电→UPS/备电", text: "开关设备、发电机、储能和冗余等级共同决定可用性。" },
+    { eyebrow: "机柜", title: "母线→机柜电源", text: "高功率机柜推动busbar、DC供电与BBU方案变化。", highlight: true },
+    { eyebrow: "芯片", title: "服务器电源→VRM→芯片", text: "最后一级转换效率、瞬态和散热影响持续性能。" },
+  ], conclusion: "规划机柜不等于已取得电力指标；设备进场不等于已上电。电网接入和配电周期常早于服务器采购。" },
+  { type: "table", headers: ["环节", "功率密度提升的影响", "核心跟踪"], rows: [
+    ["变压器/开关", "容量、短路电流和交期上升", "接网批复、设备订单、投运"],
+    ["UPS/发电机/储能", "备电容量和并机复杂度提升", "冗余、燃料/电池时长、验收"],
+    ["母线/配电", "高电流、压降、热和安全要求上升", "AC/DC架构、母线额定值"],
+    ["PSU/电源模块", "效率、功率密度和瞬态响应提升", "80PLUS之外看整机实测"],
+    ["机柜", "由几十kW向更高密度演进", "具体平台铭牌、客户设计与现场能力"],
+  ] },
+  { type: "heading", text: "2. 散热路线" },
+  { type: "table", headers: ["路线", "场景/成熟度", "优势", "难点/维护", "核心设备材料", "客户验证"], rows: [
+    ["风冷", "中低密度，成熟", "运维简单、生态广", "高热流密度下风机功耗/噪声和空间", "CRAC/风机/散热器/风道", "成熟但受平台功率限制"],
+    ["冷板液冷", "高功率CPU/GPU，已规模导入", "冷却液不直接接触电子器件、可渐进改造", "快接/漏液、冷板一致性、CDU和水质", "冷板、TIM、歧管、CDU、泵阀、快接", "需服务器+机房端联合验证"],
+    ["单相浸没", "特定高密度场景", "覆盖整板、风机少", "材料兼容、维护、重量和液体成本", "槽体、介电液、换热器", "生态较冷板窄"],
+    ["两相浸没", "高热密度探索/特定部署", "利用相变传热", "工质、密封、环境与维护复杂", "两相工质、冷凝与密封", "大规模通用部署仍有限"],
+  ], note: "供应商名单必须跟随具体客户验证；“具备液冷产品”不等于进入某GPU机柜量产BOM。" },
+  { type: "heading", text: "3. 数据中心建设与运营" },
+  { type: "kv", items: [
+    { term: "新建/改造", value: "分开记录土建、机电、网络、服务器进场和上电日期。" },
+    { term: "PUE", value: "说明地区、气候、负载和统计期；设计PUE不等于运行PUE。" },
+    { term: "机柜功率", value: "以实际设备与配电铭牌为准，不用规划峰值代表平均负载。" },
+    { term: "电力/土地/能耗", value: "核对接网许可、能耗指标、水资源与环境约束。" },
+    { term: "资本开支", value: "区分服务器等短寿命资产与建筑/网络等长寿命资产。" },
+    { term: "租赁/利用率", value: "看已签租约、上架率、上电率、GPU可用时间与计费收入。" },
+  ] },
+  { type: "company-mapping", title: "电源、液冷、PCB与基础设施公司证据表", sector: "ai-computing" },
+  sources(["alphabet-2025-q4", "envicool-2025-ar", "nvidia-gb300-nvl72"]),
+];
+
+const software: ContentBlock[] = [
+  { type: "heading", text: "硬件购买量不等于有效算力产出" },
+  { type: "lead", text: "软件生态把模型翻译成芯片能高效执行的工作，并把成千上万个节点组织成可靠服务。没有编译器、算子库、通信库、调度和容错，峰值算力只能停留在数据表。" },
+  { type: "table", headers: ["软件层", "作用", "关键指标", "迁移风险"], rows: [
+    ["编译器", "图优化、算子融合、代码生成", "编译成功率、性能、动态shape", "模型/算子不支持"],
+    ["算子库", "矩阵、注意力、归一化等高效实现", "覆盖率、kernel效率", "长尾算子回退"],
+    ["通信库", "All-Reduce/All-to-All等", "带宽利用、尾延迟、故障恢复", "硬件拓扑适配"],
+    ["分布式训练", "数据/张量/流水/专家并行", "MFU、扩展效率、checkpoint", "规模扩大收益递减"],
+    ["推理框架", "批处理、KV Cache、路由和服务", "首Token、每Token、吞吐/美元", "模型版本/量化兼容"],
+    ["压缩/量化", "降低内存和计算", "精度损失、实际吞吐", "benchmark与业务质量偏离"],
+    ["调度/容错", "多租户排队、隔离、恢复", "利用率、失败作业、恢复时间", "碎片和网络热点"],
+    ["算力租赁", "将硬件转为计费服务", "上架率、利用率、ARPU、回款", "供需错配与价格竞争"],
+  ] },
+  { type: "heading", text: "统一效率指标" },
+  { type: "kv", items: [
+    { term: "理论峰值", value: "芯片数据表上限；必须注明精度、稀疏和功耗条件。" },
+    { term: "实测性能", value: "固定模型、批量、序列长度、软件版本和拓扑的可复现实测。" },
+    { term: "MFU", value: "模型浮点利用率（Model FLOPs Utilization），衡量训练实际计算与理论峰值的距离。" },
+    { term: "集群利用率", value: "可调度且真正运行有效任务的GPU时间占比；与MFU不同。" },
+    { term: "单位Token成本", value: "含折旧、电力、网络、运维、软件和闲置，不只含芯片。" },
+    { term: "单位推理吞吐", value: "tokens/s、请求/s或业务单位/秒，并附延迟SLA。" },
+    { term: "单位功耗产出", value: "有效Token/Wh或任务/Wh，必须含系统边界。" },
+    { term: "迁移成本", value: "代码改造、精度回归、算子补齐、人才、调试和锁定成本。" },
+  ] },
+  { type: "callout", tone: "warn", text: "同一模型在不同精度、批量、上下文、量化和服务等级下的数字不能直接横比；厂商峰值倍数与客户单位Token成本是两类证据。" },
+  sources(["google-ironwood-2026", "alphabet-2025-q4", "nvidia-blackwell", "amd-ai-2025"]),
+];
+
+const companies: ContentBlock[] = [
+  { type: "heading", text: "公司映射：技术位置只是起点" },
+  { type: "paragraph", text: "表格把GPU/ASIC、CPU/DPU/NIC/交换芯片、代工封装、HBM、服务器、PCB、连接器、电源液冷、交换机、光互联、数据中心、云和软件放进同一口径。涉及相关业务不等于核心受益，需继续核对收入占比、客户认证、订单、产能利用率、库存、应收和现金流。" },
+  { type: "company-mapping", title: "全球锚点、A股与中国供应链映射", sector: "ai-computing" },
+  { type: "research-catalysts", title: "未来12—24个月催化剂（机械事件库）", sector: "ai-computing" },
+  sources(["nvidia-blackwell", "amd-q3-2025", "alphabet-2025-q4", "wus-2024-ar", "envicool-2025-ar", "naura-2025-ar"]),
+];
+
+const certainty: ContentBlock[] = [
+  { type: "heading", text: "1. 核心锚点" },
+  { type: "lead", text: "客户资本开支 → 采购订单 → 供应链备货 → 系统交付 → 数据中心上电 → 集群验收 → 实际利用率 → 收入和利润。发布会只在最前端提供技术证据，不能代替后七步。" },
+  { type: "heading", text: "2. 绿黄红机械分档" },
+  { type: "unified-certainty", title: "AI算力确定性地图", sector: "ai-computing" },
+  { type: "heading", text: "3. 五维短板规则" },
+  { type: "table", headers: ["维度", "绿档证据", "黄档证据", "红档/致命短板"], rows: [
+    ["需求确定性", "客户CapEx/采购和真实负载", "预算/意向明确", "只有行业空间"],
+    ["技术路线", "规格冻结、系统稳定", "样机/方向明确", "路线仍竞争或无产品"],
+    ["客户订单", "认证、批量、复购", "送样/小批/验证", "无客户或传闻"],
+    ["产能交付", "稳定良率、批量交付、上电", "扩产/试产", "只有规划产能"],
+    ["财务兑现", "收入/毛利/现金回款可验证", "收入开始但未拆分", "相关收入弱或无收入"],
+  ], note: "任何单项存在致命短板时，不用平均总分提升档位。" },
+  { type: "research-catalysts", title: "AI算力催化剂日历", sector: "ai-computing" },
+  { type: "research-failures", title: "AI算力失败与延期复盘", sector: "ai-computing" },
+  { type: "unified-certainty", title: "AI基础设施与商业航天确定性总图" },
+  { type: "cross-sector-graph", title: "AI基础设施与商业航天跨板块关联" },
+  { type: "research-catalysts", title: "四板块统一催化剂数据库" },
+  { type: "research-failures", title: "四板块统一失败与延期复盘库" },
+  { type: "research-sources", title: "AI算力参考资料索引", sector: "ai-computing" },
+];
+
+export const aiComputingSector: Sector = {
+  key: "ai-computing",
+  label: "AI算力",
+  tagline: "从真实负载到机架交付、利用率与财务兑现的系统研究",
+  hot: true,
+  verified: true,
+  nodes: ["晶圆制造", "先进封装", "GPU/ASIC", "HBM", "服务器与机柜", "高速网络", "存储", "电源与液冷", "数据中心", "云服务与算力租赁", "软件生态"],
+  tags: [
+    { key: "overview", label: "总览", icon: "LayoutDashboard", description: "系统定义、训练/推理、产业地图、收益来源和研究导航。", verified: true, content: overview },
+    { key: "chips-architecture", label: "算力芯片与架构", icon: "Cpu", description: "GPU/ASIC/CPU/DPU/NIC、Chiplet、先进封装与六层价值判断。", verified: true, content: chips },
+    { key: "servers-clusters", label: "服务器与集群", icon: "Server", description: "单卡到机架系统、Scale-up/out、分架构BOM和交付确定性。", verified: true, content: servers },
+    { key: "network-interconnect", label: "网络与互联", icon: "Network", description: "分层协议、网络指标和交换/NIC/铜光产业链影响。", verified: true, content: network },
+    { key: "data-center", label: "数据中心基础设施", icon: "Building2", description: "电力链条、风冷/液冷路线、建设上电与运营利用率。", verified: true, content: infrastructure },
+    { key: "software-efficiency", label: "软件生态与算力效率", icon: "Code2", description: "编译器、算子/通信库、调度、MFU和单位Token成本。", verified: true, content: software },
+    { key: "companies", label: "产业链与公司", icon: "Factory", description: "全球锚点、A股与中国供应链的客户、订单、产能和财务映射。", verified: true, content: companies },
+    { key: "certainty-map", label: "确定性地图", icon: "ShieldCheck", description: "从CapEx到利润的证据链、五维短板、催化剂与失败复盘。", verified: true, content: certainty },
+  ],
+};

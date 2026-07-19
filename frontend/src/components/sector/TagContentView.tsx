@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { GlassCard } from "@/components/ui/GlassCard";
 import {
   ProductionAnchor,
@@ -23,6 +24,15 @@ import {
   DrugAssetCards,
   FailureLibrary,
 } from "@/components/sector/BiopharmaResearchBlocks";
+import {
+  CompanyMappingTable,
+  CrossSectorEvidenceGraph,
+  ResearchAssetWorkbench,
+  ResearchCatalystCalendar,
+  ResearchFailureLibrary,
+  ResearchSourceIndex,
+  UnifiedCertaintyMap,
+} from "@/components/sector/ResearchBlocks";
 
 interface Props {
   blocks: ContentBlock[];
@@ -334,6 +344,34 @@ function renderBlock(b: ContentBlock, i: number) {
       return <CatalystCalendar key={i} title={b.title} />;
     case "failure-library":
       return <FailureLibrary key={i} title={b.title} />;
+    case "research-assets":
+      return <ResearchAssetWorkbench key={i} title={b.title} sector={b.sector} recordType={b.recordType} />;
+    case "company-mapping":
+      return <CompanyMappingTable key={i} title={b.title} sector={b.sector} />;
+    case "unified-certainty":
+      return <UnifiedCertaintyMap key={i} title={b.title} sector={b.sector} />;
+    case "research-catalysts":
+      return <ResearchCatalystCalendar key={i} title={b.title} sector={b.sector} />;
+    case "research-failures":
+      return <ResearchFailureLibrary key={i} title={b.title} sector={b.sector} />;
+    case "cross-sector-graph":
+      return <CrossSectorEvidenceGraph key={i} title={b.title} />;
+    case "research-sources":
+      return <ResearchSourceIndex key={i} title={b.title} sector={b.sector} />;
+    case "sector-links":
+      return (
+        <section key={i} className="rounded-xl border border-primary/25 bg-primary/[0.045] p-4">
+          <h3 className="text-sm font-bold text-foreground">{b.title}</h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {b.items.map((item) => (
+              <Link key={item.to} to={item.to} className="rounded-xl border border-border/55 bg-background/25 p-4 transition-colors hover:border-primary/40 hover:bg-primary/[0.05]">
+                <p className="text-sm font-bold text-primary">{item.label}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.description}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      );
     case "list":
       if (b.ordered) {
         return (

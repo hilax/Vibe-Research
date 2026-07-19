@@ -1,5 +1,9 @@
 import raw from "./sectors.json";
+import { aiComputingSector } from "./aiComputing";
 import { biopharmaSector } from "./biopharma";
+import { businessSpaceSector } from "./businessSpace";
+import { hbmSector } from "./hbm";
+import { opticalSector } from "./optical";
 
 // 内容块的结构化定义。每个 block 是独立类型，渲染器按 type 分支。
 // 文字、引用、来源底注都来自结构化字段，杜绝"凭模型记忆"——任何具体数字必须可溯源。
@@ -164,6 +168,14 @@ export type ContentBlock =
   | { type: "drug-assets"; title: string; intro?: string; assetIds?: string[] }
   | { type: "catalyst-calendar"; title: string }
   | { type: "failure-library"; title: string }
+  | { type: "research-assets"; title: string; sector?: import("./research").ResearchSectorKey; recordType?: import("./research").ResearchRecord["recordType"] }
+  | { type: "company-mapping"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "unified-certainty"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "research-catalysts"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "research-failures"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "cross-sector-graph"; title: string }
+  | { type: "research-sources"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "sector-links"; title: string; items: { label: string; to: string; description: string }[] }
   | { type: "quote"; text: string; cite?: string }
   | { type: "callout"; tone?: "info" | "warn"; text: string }
   | { type: "sources"; items: { label: string; date?: string; url?: string }[] };
@@ -195,9 +207,13 @@ export interface SectorsFile {
 
 const rawData = raw as SectorsFile;
 
-// 生物医药是独立、可持续更新的数据集；保留 sectors.json 中的板块顺序，
-// 仅在运行时替换原先未核实的 ai-pharma 空壳，避免把大型研究底稿塞回通用索引。
+// 大型研究板块使用独立、可持续更新的数据集；保留 sectors.json 中的板块顺序，
+// 仅在运行时替换通用索引中的对应条目，避免把研究底稿塞回导航索引。
+const researchSectors = new Map(
+  [aiComputingSector, hbmSector, opticalSector, businessSpaceSector, biopharmaSector].map((sector) => [sector.key, sector]),
+);
+
 export const sectorsData: SectorsFile = {
   ...rawData,
-  sectors: rawData.sectors.map((sector) => sector.key === biopharmaSector.key ? biopharmaSector : sector),
+  sectors: rawData.sectors.map((sector) => researchSectors.get(sector.key) ?? sector),
 };
