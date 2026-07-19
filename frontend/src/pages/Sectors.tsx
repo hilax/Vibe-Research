@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Flame, ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
-import sectorsData from "@/data/sectors.json";
+import { sectorsData } from "@/data/sectors";
 
 export function Sectors() {
   const sectors = sectorsData.sectors;

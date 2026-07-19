@@ -3,7 +3,8 @@ import { ArrowLeft, Plus, Wrench } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
-import sectorsData from "@/data/sectors.json";
+import { TagGrid } from "@/components/sector/TagGrid";
+import { sectorsData } from "@/data/sectors";
 
 export function SectorDetail() {
   const { key } = useParams();
@@ -17,9 +18,22 @@ export function SectorDetail() {
     );
   }
 
-  const aiContext =
-    `板块：${sector.label}\n定位：${sector.tagline}\n产业链环节：` +
-    (sector.nodes.length ? sector.nodes.join("、") : "（环节梳理中）");
+  const aiContextParts = [
+    `板块：${sector.label}`,
+    `定位：${sector.tagline}`,
+    `产业链环节：` + (sector.nodes.length ? sector.nodes.join("、") : "（环节梳理中）"),
+  ];
+  if (sector.tags?.length) {
+    aiContextParts.push(
+      "板块栏目：" + sector.tags
+        .map((t) => `\n  - ${t.key}（${t.label}）：${t.description}${t.verified ? "" : "（待补）"}`)
+        .join(""),
+    );
+  }
+  const aiContext = aiContextParts.join("\n");
+  const suggestions = sector.key === "ai-pharma"
+    ? ["按人体证据重排研究优先级", "当前最重要的临床催化剂", "哪些技术路线仍未验证", "全球硬卡口与国产替代分开看"]
+    : ["按七维框架拆解", "这个板块的产业链地图", "哪个环节卡脖子", "有什么风险信号"];
 
   return (
     <div>
@@ -34,7 +48,7 @@ export function SectorDetail() {
           <AskAiButton
             context={aiContext}
             label="让 AI 拆这个板块"
-            suggestions={["按七维框架拆解", "这个板块的产业链地图", "哪个环节卡脖子", "有什么风险信号"]}
+            suggestions={suggestions}
           />
         }
       />
@@ -66,6 +80,15 @@ export function SectorDetail() {
           </div>
         </GlassCard>
       )}
+
+      {sector.tags?.length ? (
+        <section className="mt-8">
+          <h3 className="mb-3 text-sm font-semibold text-muted-foreground">
+            板块栏目（{sector.tags.length}）
+          </h3>
+          <TagGrid sector={sector} />
+        </section>
+      ) : null}
     </div>
   );
 }

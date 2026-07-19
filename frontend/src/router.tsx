@@ -4,6 +4,7 @@ import { DailyReview } from "@/pages/DailyReview";
 import { Intel } from "@/pages/Intel";
 import { Sectors } from "@/pages/Sectors";
 import { SectorDetail } from "@/pages/SectorDetail";
+import { SectorTagDetail } from "@/pages/SectorTagDetail";
 import { Portfolio } from "@/pages/Portfolio";
 import { StockData } from "@/pages/StockData";
 import { Watchlist } from "@/pages/Watchlist";
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
       { path: "/intel", element: <Intel /> },
       { path: "/sectors", element: <Sectors /> },
       { path: "/sectors/:key", element: <SectorDetail /> },
+      { path: "/sectors/:key/:tag", element: <SectorTagDetail /> },
       { path: "/portfolio", element: <Portfolio /> },
       { path: "/stock-data", element: <StockData /> },
       { path: "/quant-screening", element: <QuantScreening /> },
