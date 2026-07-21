@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
-  AlertTriangle, ChevronDown, ChevronUp, Code2, Database,
-  Filter, Layers3, LoaderCircle, Pencil, Play, Plus, RefreshCw,
-  SlidersHorizontal, Star, TrendingUp, X, Square,
+  AlertTriangle, ChevronDown, ChevronUp, Code2, Database, Eye, Flame,
+  Filter, Layers3, LineChart, LoaderCircle, Pencil, Play, Plus, RefreshCw,
+  Rocket, Search, SlidersHorizontal, Sparkles, Square, Star,
+  Target, TrendingUp, Wand2, X, Zap,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -82,7 +83,86 @@ interface DisplayStrategy {
   defaultSource: string;
   baseStrategy: QuantStrategy;
   isCustom: boolean;
+  // ── UI 增强：分类与标签 ──
+  category: StrategyCategory;
+  tags: StrategyTag[];
+  icon: ReactNode;
 }
+
+type StrategyCategory = "blue_diamond" | "classic" | "custom";
+type StrategyTag = "rps" | "finance" | "capital" | "high_tight" | "drawdown";
+
+/** 给每个内置策略打分类 + 图标 + 标签；自定义策略走默认 classic 分类。 */
+function describeBuiltin(strategy: string): { category: StrategyCategory; tags: StrategyTag[]; icon: ReactNode } {
+  switch (strategy) {
+    case "blue_diamond_left_low":
+      return {
+        category: "blue_diamond",
+        tags: ["rps", "capital", "drawdown"],
+        icon: <Sparkles className="h-4 w-4" />,
+      };
+    case "daily_observe_3":
+      return {
+        category: "blue_diamond",
+        tags: ["rps"],
+        icon: <Eye className="h-4 w-4" />,
+      };
+    case "xg_breakout":
+      return {
+        category: "blue_diamond",
+        tags: ["rps", "capital", "high_tight"],
+        icon: <Rocket className="h-4 w-4" />,
+      };
+    case "monthly_reversal_62":
+      return {
+        category: "classic",
+        tags: ["rps"],
+        icon: <LineChart className="h-4 w-4" />,
+      };
+    case "growth_mrgc_sxhcg":
+      return {
+        category: "classic",
+        tags: ["rps", "finance", "capital"],
+        icon: <Flame className="h-4 w-4" />,
+      };
+    case "near_high":
+    default:
+      return {
+        category: "classic",
+        tags: [],
+        icon: <Target className="h-4 w-4" />,
+      };
+  }
+}
+
+const CATEGORY_META: Record<StrategyCategory, { title: string; subtitle: string; icon: ReactNode; accent: string }> = {
+  blue_diamond: {
+    title: "蓝钻公式",
+    subtitle: "通达信自定义选股公式",
+    icon: <Sparkles className="h-3.5 w-3.5" />,
+    accent: "from-amber-500/25 to-orange-500/10 border-amber-400/40",
+  },
+  classic: {
+    title: "经典策略",
+    subtitle: "内置结构化策略",
+    icon: <Wand2 className="h-3.5 w-3.5" />,
+    accent: "from-sky-500/20 to-indigo-500/10 border-sky-400/40",
+  },
+  custom: {
+    title: "自定义策略",
+    subtitle: "用户新建的策略",
+    icon: <Plus className="h-3.5 w-3.5" />,
+    accent: "from-fuchsia-500/20 to-pink-500/10 border-fuchsia-400/40",
+  },
+};
+
+const TAG_META: Record<StrategyTag, { label: string; tone: string }> = {
+  rps:        { label: "RPS",  tone: "border-primary/30 bg-primary/10 text-primary" },
+  finance:    { label: "财务", tone: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" },
+  capital:    { label: "换手", tone: "border-sky-400/30 bg-sky-400/10 text-sky-300" },
+  high_tight: { label: "突破", tone: "border-amber-400/30 bg-amber-400/10 text-amber-300" },
+  drawdown:   { label: "回撤", tone: "border-rose-400/30 bg-rose-400/10 text-rose-300" },
+};
 
 const FORMULA_DRAFTS_KEY = "vr-quant-tdx-source-drafts-v1";
 const CUSTOM_STRATEGIES_KEY = "vr-quant-custom-strategies-v1";
@@ -307,6 +387,7 @@ export function QuantScreening() {
       .filter((p) => !hiddenBuiltins.includes(p.strategy))
       .map((p) => {
         const ov = builtinOverrides[p.strategy] ?? {};
+        const desc = describeBuiltin(p.strategy);
         return {
           key: p.strategy,
           label: ov.label ?? p.label,
@@ -314,6 +395,9 @@ export function QuantScreening() {
           defaultSource: p.default_source,
           baseStrategy: p.strategy as QuantStrategy,
           isCustom: false,
+          category: desc.category,
+          tags: desc.tags,
+          icon: desc.icon,
         };
       }),
     ...customStrategies.map((c) => ({
@@ -323,8 +407,32 @@ export function QuantScreening() {
       defaultSource: c.source,
       baseStrategy: c.base_strategy,
       isCustom: true,
+      category: "custom" as StrategyCategory,
+      tags: ["rps"] as StrategyTag[],
+      icon: <Wand2 className="h-4 w-4" />,
     })),
   ], [presets, customStrategies, builtinOverrides, hiddenBuiltins]);
+
+  // ── 策略搜索过滤（按 label / description 模糊匹配）─────────────────────
+  const [strategySearch, setStrategySearch] = useState("");
+  const filteredStrategies = useMemo(() => {
+    const q = strategySearch.trim().toLowerCase();
+    if (!q) return allStrategies;
+    return allStrategies.filter((s) =>
+      s.label.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.key.toLowerCase().includes(q),
+    );
+  }, [allStrategies, strategySearch]);
+
+  // 把过滤后的策略按 category 分组渲染
+  const strategiesByCategory = useMemo(() => {
+    const map: Record<StrategyCategory, DisplayStrategy[]> = {
+      blue_diamond: [], classic: [], custom: [],
+    };
+    for (const s of filteredStrategies) map[s.category].push(s);
+    return map;
+  }, [filteredStrategies]);
 
   const selected = allStrategies.find((s) => s.key === selectedKey);
   const activeSource = drafts[selectedKey] ?? selected?.defaultSource ?? "";
@@ -661,59 +769,133 @@ export function QuantScreening() {
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> 正在加载策略列表…
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {allStrategies.map((item) => (
-              <div key={item.key} className="group relative flex items-center">
-                <button
-                  data-testid={item.key === selectedKey ? "quant-strategy" : undefined}
-                  disabled={loading}
-                  onClick={() => handleSelectStrategy(item.key)}
-                  className={cn(
-                    "rounded-lg border py-2 pl-4 pr-[3.75rem] text-sm font-medium transition-all",
-                    item.key === selectedKey
-                      ? "border-primary/60 bg-primary/15 text-primary shadow-sm shadow-primary/10"
-                      : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground",
-                  )}
-                >
-                  {item.label}
-                  {item.isCustom && (
-                    <span className="ml-1.5 rounded-full bg-current/15 px-1.5 py-0.5 text-[9px] opacity-60">自定义</span>
-                  )}
-                </button>
-                {/* 重命名按钮（悬浮显示） */}
-                <button
-                  type="button"
-                  aria-label={`重命名策略 ${item.label}`}
-                  onClick={(e) => { e.stopPropagation(); handleEditStrategy(item.key); }}
-                  className="absolute right-7 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:text-primary"
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-                {/* 删除/隐藏按钮（悬浮显示） */}
-                <button
-                  type="button"
-                  aria-label={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    item.isCustom ? handleDeleteStrategy(item.key) : handleHideBuiltin(item.key);
-                  }}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-50 hover:!opacity-100 hover:text-destructive"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+          <div className="space-y-3">
+            {/* 搜索框 + 添加策略按钮 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={strategySearch}
+                  onChange={(e) => setStrategySearch(e.target.value)}
+                  placeholder="搜索策略（名称 / 说明 / key）"
+                  className="w-full rounded-lg border border-border bg-black/20 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
+                />
               </div>
-            ))}
+              {!showAddForm && !editingKey && (
+                <button
+                  type="button"
+                  disabled={loading || formulaLoading}
+                  onClick={openAddForm}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition-all hover:border-primary/40 hover:text-primary disabled:opacity-40"
+                >
+                  <Plus className="h-3.5 w-3.5" /> 添加策略
+                </button>
+              )}
+            </div>
 
-            {/* + 添加策略 */}
-            {!showAddForm && !editingKey && (
-              <button
-                type="button"
-                disabled={loading || formulaLoading}
-                onClick={openAddForm}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-4 py-2 text-sm text-muted-foreground transition-all hover:border-primary/40 hover:text-primary disabled:opacity-40"
-              >
-                <Plus className="h-3.5 w-3.5" /> 添加策略
-              </button>
+            {/* 按分类分组渲染策略卡片 */}
+            {(Object.keys(strategiesByCategory) as StrategyCategory[]).map((cat) => {
+              const list = strategiesByCategory[cat];
+              if (list.length === 0) return null;
+              const meta = CATEGORY_META[cat];
+              return (
+                <div key={cat} className="rounded-xl border border-border/40 bg-black/10 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-primary">{meta.icon}</span>
+                      <span className="font-semibold text-foreground/90">{meta.title}</span>
+                      <span className="text-muted-foreground">· {meta.subtitle}</span>
+                    </div>
+                    <span className="rounded-full bg-black/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {list.length} 个
+                    </span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {list.map((item) => {
+                      const isActive = item.key === selectedKey;
+                      return (
+                        <div
+                          key={item.key}
+                          className={cn(
+                            "group relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-all",
+                            isActive
+                              ? "border-primary/60 bg-gradient-to-br from-primary/15 to-primary/5 shadow-sm shadow-primary/10"
+                              : "border-border/60 bg-black/20 hover:border-primary/30 hover:bg-black/30",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            data-testid={isActive ? "quant-strategy" : undefined}
+                            disabled={loading}
+                            onClick={() => handleSelectStrategy(item.key)}
+                            className="flex flex-1 flex-col gap-1.5 text-left disabled:cursor-not-allowed"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={cn(
+                                "flex items-center gap-1.5 text-sm font-semibold",
+                                isActive ? "text-primary" : "text-foreground/90",
+                              )}>
+                                <span className={cn(
+                                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
+                                  isActive ? "bg-primary/20 text-primary" : "bg-muted/60 text-muted-foreground",
+                                )}>
+                                  {item.icon}
+                                </span>
+                                <span className="line-clamp-1">{item.label}</span>
+                              </span>
+                              {isActive && <Zap className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                            </div>
+                            <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                              {item.description || <span className="opacity-50">暂无说明</span>}
+                            </p>
+                            {item.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {item.tags.map((tag) => (
+                                  <span key={tag} className={cn(
+                                    "rounded-full border px-1.5 py-0.5 text-[9px] font-medium",
+                                    TAG_META[tag].tone,
+                                  )}>
+                                    {TAG_META[tag].label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </button>
+                          {/* 重命名 / 删除按钮（悬浮显示） */}
+                          <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            <button
+                              type="button"
+                              aria-label={`重命名策略 ${item.label}`}
+                              onClick={(e) => { e.stopPropagation(); handleEditStrategy(item.key); }}
+                              className="rounded p-0.5 text-muted-foreground hover:text-primary"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                item.isCustom ? handleDeleteStrategy(item.key) : handleHideBuiltin(item.key);
+                              }}
+                              className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredStrategies.length === 0 && (
+              <p className="py-6 text-center text-xs text-muted-foreground">
+                没有匹配「{strategySearch}」的策略
+              </p>
             )}
           </div>
         )}

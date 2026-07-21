@@ -378,7 +378,13 @@ export interface QaRow { company: string; question: string; answer: string | nul
 export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
-export type QuantStrategy = "near_high" | "monthly_reversal_62" | "growth_mrgc_sxhcg";
+export type QuantStrategy =
+  | "near_high"
+  | "monthly_reversal_62"
+  | "growth_mrgc_sxhcg"
+  | "blue_diamond_left_low"
+  | "daily_observe_3"
+  | "xg_breakout";
 export interface TdxFormulaPreset {
   strategy: QuantStrategy; label: string; description: string; syntax_version: string;
   default_source: string; default_history_days: number; supported_functions: string[];
@@ -449,7 +455,37 @@ export interface QuantScreenResult {
   base_rows: QuantRow[]; rows: QuantRow[];
 }
 
-// ── 选股进度流（NDJSON） ───────────────────────────────────────────────────
+// ── 通达信 blocknew 选股公式板块 ────────────────────────────────────────────
+// 数据从后端 backend/data/tdx_blocks.json 取（前端不需要读本地 TDX 文件夹）。
+export interface TdxBlockSummary {
+  id: string;
+  label: string;
+  description: string;
+  stock_count: number;
+}
+export interface TdxBlock extends TdxBlockSummary {
+  codes: string[];          // 标准格式 "000703.SZ" / "600246.SH" / "920002.BJ"
+}
+export interface TdxBlockStockRow {
+  code: string;
+  name: string;
+  industry: string;
+  close: number | null;
+  change_pct: number | null;
+  turnover_pct: number | null;
+  pe_ttm: number | null;
+  pb: number | null;
+  mcap_yi: number | null;
+  limit_up: number | null;
+  limit_down: number | null;
+  matched: boolean;
+}
+export interface TdxBlockDetail extends TdxBlock {
+  quotes: Record<string, Quote>;
+  rows: TdxBlockStockRow[];
+}
+
+// ── 选股阶段枚举 ─────────────────────────────────────────────────────────
 export type QuantPhase =
   | "validate" | "basepool" | "rps" | "bars" | "finance" | "evaluate";
 
@@ -484,6 +520,7 @@ export interface QuantErrorEvent {
 export interface QuantDoneEvent { type: "done"; }
 export interface QuantHeartbeatEvent { type: "heartbeat"; }
 
+// ── 选股进度流（NDJSON） ────────────────────────────────────────────────
 export type QuantStreamEvent =
   | QuantProgressEvent
   | QuantResultEvent
@@ -550,6 +587,10 @@ export const api = {
   quantScreen: (input: QuantScreenInput) =>
     request<QuantScreenResult>("/quant/screen", "POST", input),
   quantFormulas: () => get<TdxFormulaPreset[]>("/quant/formulas"),
+  // 通达信 blocknew 板块摘要/明细/含行情明细
+  tdxBlocks: () => get<TdxBlockSummary[]>("/tdx/blocks"),
+  tdxBlock: (id: string) => get<TdxBlock>(`/tdx/blocks/${encodeURIComponent(id)}`),
+  tdxBlockStocks: (id: string) => get<TdxBlockDetail>(`/tdx/blocks/${encodeURIComponent(id)}/stocks`),
   validateQuantFormula: (strategy: QuantStrategy, source: string, signal?: AbortSignal) =>
     request<TdxFormulaValidation>("/quant/formula/validate", "POST", { strategy, source }, signal),
   quantRpsStatus: () => get<QuantRpsStatus>("/quant/rps/status"),

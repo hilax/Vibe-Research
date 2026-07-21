@@ -59,6 +59,82 @@ YXFZ:FYX1 AND FYX2 AND FYX3 AND FYX4 AND FYX5 AND FYX6 AND FYX7;
 """
 
 
+# ── 蓝钻公式 · 左侧低吸 ─────────────────────────────────────────────────
+# 用户在通达信中自定义的"个股一线红"低吸选股公式：
+#   · 20 日内最大回撤 ≤ 25%；
+#   · 收盘价 ≥ 250 日最高价 × 0.8；
+#   · RPS50 ≥ 98 或 RPS20 ≥ 98 或（RPS50≥97 且 RPS20+RPS50 ≥ 190）；
+#   · 收盘价贴近 20 日线（< 1.005）；
+#   · 过去 20 日内收盘低于 20 日线 ≤ 2 天、低于 10 日线 ≤ 8 天；
+#   · MA50 > MA120 / MA200 / MA250；
+#   · 日换手率 < 10%。
+BLUE_DIAMOND_LEFT_LOW = r"""{蓝钻公式-左侧低吸}
+ZC50:=EXTDATA_USER(3,0);{50天的RPS}
+ZCRPS50:=ZC50/10;
+ZC20:=EXTDATA_USER(4,0);{20天的RPS}
+ZCRPS20:=ZC20/10;
+ZC新高天数:=HHVBARS(H,20);
+ZC新低天数:=IF(ZC新高天数=0,0,LLVBARS(L,ZC新高天数));
+ZC新高价:=REF(H,ZC新高天数);
+ZC新低价:=REF(L,ZC新低天数);
+ZC回撤幅度:=(ZC新高价-ZC新低价)/ZC新高价;
+ZCDX0001:=ZC回撤幅度<=0.25 AND COUNT(ZC回撤幅度>0.25,ZC新高天数)=0;
+ZCDX0002:=C/HHV(C,250)>0.8;
+ZCDX00:=ZCDX0001 AND ZCDX0002;
+ZCDX011:=ZCRPS50>=98;
+ZCDX012:=ZCRPS20>=98;
+ZCDX013:=ZCRPS50>=97 AND ZCRPS20+ZCRPS50>=190;
+ZCDX01:=ZCDX011 OR ZCDX012 OR ZCDX013;
+ZCDX02:=C/MA(C,20)<1.005;
+ZCDX03:=COUNT(C<MA(C,20),20)<=2 AND COUNT(C<MA(C,10),20)<=8 AND (COUNT(L<MA(C,20),20)<=4 OR ZCRPS50>=99);
+ZCDX04:=MA(C,50)>MA(C,120) AND MA(C,50)>MA(C,200) AND MA(C,50)>MA(C,250);
+ZCDX05:=VOL/CAPITAL*100<10;
+ZCDX:=ZCDX00 AND ZCDX01 AND ZCDX02 AND ZCDX03 AND ZCDX04 AND ZCDX05;
+ZCDX;
+"""
+
+
+# ── 每日观察选股 3 ──────────────────────────────────────────────────────
+# RPS120 / RPS250 / RPS50 任一 ≥ 95 且当前价距离 250 日最高价仍有空间。
+DAILY_OBSERVE_3 = r"""{每日观察选股3}
+KD120:=EXTDATA_USER(1,0);{120天的RPS}
+RPSKD120:=KD120/10;
+KD250:=EXTDATA_USER(2,0);{250天的RPS}
+RPSKD250:=KD250/10;
+KD50:=EXTDATA_USER(3,0);{50天的RPS}
+RPSKD50:=KD50/10;
+KD01:=IF(RPSKD120<=95,0,1);
+KD02:=IF(RPSKD250<=95,0,1);
+KD03:=IF(RPSKD50<=95,0,1);
+KD1:=(KD01 OR KD02 OR KD03) AND H/HHV(HIGH,250)>0.6;
+KD1;
+"""
+
+
+# ── XG 高位突破（XG1 / XG2 / XG3） ─────────────────────────────────────
+# 250 日新高一阶/二阶突破 + RPS120/250 ≥ 96/97/98 阈值，换手率 < 20%。
+XG_BREAKOUT = r"""{XG 高位突破}
+XG120:=EXTDATA_USER(1,0);{120天的RPS}
+RPSXG120:=XG120/10;
+XG250:=EXTDATA_USER(2,0);{250天的RPS}
+RPSXG250:=XG250/10;
+XG50:=EXTDATA_USER(3,0);{50天的RPS}
+RPSXG50:=XG50/10;
+XG11:=COUNT(C=HHV(C,250),5)>=1;
+XG12:=IF(RPSXG120<=95.99,0,1) OR IF(RPSXG250<=95.99,0,1);
+XG13:=IF(RPSXG120<=94.99,0,1) AND IF(RPSXG50<=94.99,0,1);
+XG1:=XG11 AND (XG12 OR XG13);
+XG21:=C/HHV(H,250)>=0.85;
+XG22:=IF(RPSXG120<=96.99,0,1) OR IF(RPSXG250<=96.99,0,1);
+XG2:=XG21 AND XG22;
+XG31:=C/HHV(H,250)>=0.70;
+XG32:=IF(RPSXG120<=97.99,0,1) OR IF(RPSXG250<=97.99,0,1);
+XG3:=XG31 AND XG32;
+XG4:=VOL/CAPITAL*100<20;
+(XG1 OR XG2 OR XG3) AND XG4;
+"""
+
+
 GROWTH_MRGC_SXHCG = r"""{MRGC / SXHCG 高成长；可直接作为通达信条件选股公式}
 XG120:=EXTDATA_USER(1,0);{120天的RPS}
 RPSXG120:=XG120/10;
@@ -273,6 +349,24 @@ _PRESETS = {
         "description": "完整 MRGC/SXHCG、财务增长及板块过滤公式。",
         "default_source": GROWTH_MRGC_SXHCG,
         "default_history_days": 280,
+    },
+    "blue_diamond_left_low": {
+        "label": "蓝钻公式 · 左侧低吸",
+        "description": "RPS50/20 极强 + 回撤 ≤25% + 收盘贴近 MA20 + 均线多头排列 + 换手<10%。",
+        "default_source": BLUE_DIAMOND_LEFT_LOW,
+        "default_history_days": 260,
+    },
+    "daily_observe_3": {
+        "label": "每日观察选股 3",
+        "description": "RPS120/250/50 任一 ≥95 且距 250 日最高仍有空间，作为每日观察池。",
+        "default_source": DAILY_OBSERVE_3,
+        "default_history_days": 260,
+    },
+    "xg_breakout": {
+        "label": "XG 高位突破",
+        "description": "XG1 / XG2 / XG3 三档新高突破叠加 RPS 阈值与换手率<20%。",
+        "default_source": XG_BREAKOUT,
+        "default_history_days": 260,
     },
 }
 

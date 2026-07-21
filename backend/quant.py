@@ -50,6 +50,9 @@ _STRATEGIES = {
     "near_high": "接近一年新高",
     "monthly_reversal_62": "月线反转 6.2",
     "growth_mrgc_sxhcg": "RPS 高成长（MRGC / SXHCG）",
+    "blue_diamond_left_low": "蓝钻公式 · 左侧低吸",
+    "daily_observe_3": "每日观察选股 3",
+    "xg_breakout": "XG 高位突破",
 }
 
 # ── RPS 后台预热状态 ──────────────────────────────────────────────────────

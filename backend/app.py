@@ -29,6 +29,7 @@ import market
 import myreports as mr
 import quant
 import quant_formula
+import tdx_blocks
 import tdx_formula
 import tdx_presets
 
@@ -85,8 +86,14 @@ def health():
     return {"ok": True, "service": "vibe-research-api", "version": "0.1.3"}
 
 
+_QUANT_STRATEGIES = Literal[
+    "near_high", "monthly_reversal_62", "growth_mrgc_sxhcg",
+    "blue_diamond_left_low", "daily_observe_3", "xg_breakout",
+]
+
+
 class QuantScreenReq(BaseModel):
-    strategy: Literal["near_high", "monthly_reversal_62", "growth_mrgc_sxhcg"] = "near_high"
+    strategy: _QUANT_STRATEGIES = "near_high"
     fund_ratio_min: float = Field(5.0, ge=0.1, le=100)
     north_value_min_yi: float = Field(1.0, ge=0, le=100000)
     near_high_pct: float = Field(5.0, ge=0, le=50)
@@ -97,10 +104,10 @@ class QuantScreenReq(BaseModel):
 
 
 class QuantFormulaValidateReq(BaseModel):
-    strategy: Literal["near_high", "monthly_reversal_62", "growth_mrgc_sxhcg"] = "near_high"
+    strategy: _QUANT_STRATEGIES = "near_high"
     formula: dict[str, Any] | None = None
     source: str | None = Field(None, max_length=100000)
-    # 兼容旧版“接近新高”页面：未提供 formula 时仍用这两个字段生成等价配置。
+    # 兼容旧版"接近新高"页面：未提供 formula 时仍用这两个字段生成等价配置。
     near_high_pct: float = Field(5.0, ge=0, le=50)
     lookback_days: int = Field(250, ge=60, le=800)
 
@@ -368,6 +375,74 @@ def quant_screen_stream(job_id: str, request: Request):
                 break
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+@app.get("/api/tdx/blocks")
+def tdx_list_blocks():
+    """列出通达信 blocknew 中的所有选股公式及其个股数（不返回具体代码，全表轻量）。"""
+    return {"data": tdx_blocks.list_blocks()}
+
+
+@app.get("/api/tdx/blocks/{block_id}")
+def tdx_get_block(block_id: str):
+    """返回指定板块的所有个股（不含行情）、中文标签和描述。"""
+    block = tdx_blocks.get_block(block_id)
+    if block is None:
+        raise HTTPException(404, f"未找到板块: {block_id}")
+    return {"data": block}
+
+
+@app.get("/api/tdx/blocks/{block_id}/quotes")
+def tdx_get_block_quotes(block_id: str):
+    """返回板块内个股 + 腾讯实时行情（同 /api/quote 的数据格式）。失败时仍返回 codes。"""
+    block = tdx_blocks.get_block(block_id)
+    if block is None:
+        raise HTTPException(404, f"未找到板块: {block_id}")
+    codes = [c.split(".")[0] for c in block["codes"]]
+    quotes = {}
+    try:
+        raw = astock.tencent_quote(codes)
+        quotes = {f"{k}.{astock.get_prefix(k)}": v for k, v in raw.items()}
+    except Exception:  # noqa: BLE001 — 行情失败只影响 quotes 字段，不影响 codes 返回
+        quotes = {}
+    return {"data": {**block, "quotes": quotes}}
+
+
+@app.get("/api/tdx/blocks/{block_id}/stocks")
+def tdx_get_block_stocks(block_id: str):
+    """板块中股票加入量化基础池 — 返回结构与 /api/quant/screen 中 row 类似，但使用腾讯行情做粗字段。
+
+    此端点供「通达信公式页」直接做整表展示，不调取基金/北向数据（TDX 选股信号本来就不含基金数据）。
+    """
+    block = tdx_blocks.get_block(block_id)
+    if block is None:
+        raise HTTPException(404, f"未找到板块: {block_id}")
+    codes = [c.split(".")[0] for c in block["codes"]]
+    quotes = {}
+    try:
+        raw = astock.tencent_quote(codes)
+        quotes = {f"{k}.{astock.get_prefix(k)}": v for k, v in raw.items()}
+    except Exception:  # noqa: BLE001
+        quotes = {}
+    # 给前端一个与 QuantRow 兼容的最小字段集
+    rows = []
+    for code_with_market in block["codes"]:
+        q = quotes.get(code_with_market, {})
+        rows.append({
+            "code": code_with_market.split(".")[0],
+            "name": q.get("name", ""),
+            "industry": q.get("industry", ""),
+            "close": q.get("price"),
+            "change_pct": q.get("change_pct"),
+            "turnover_pct": q.get("turnover_pct"),
+            "pe_ttm": q.get("pe_ttm"),
+            "pb": q.get("pb"),
+            "mcap_yi": q.get("mcap_yi"),
+            "limit_up": q.get("limit_up"),
+            "limit_down": q.get("limit_down"),
+            "matched": True,
+        })
+    return {"data": {**block, "quotes": quotes, "rows": rows}}
 
 
 class LLMConfig(BaseModel):
