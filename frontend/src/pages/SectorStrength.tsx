@@ -1,480 +1,580 @@
-// Auto-generated: SectorStrength page
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, BarChart3, ChevronDown, ChevronUp,
-  Database, Edit3, LoaderCircle, Plus, RefreshCw,
-  Save, Search, Sparkles, Trash2, TrendingUp, X,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  BarChart3,
+  Database,
+  Edit3,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  X,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { PageHeader } from "@/components/ui/PageHeader";
+import {
+  api,
+  type SectorSource,
+  type SectorStrengthRow,
+  type SectorStrengthSnapshot,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+type Period = 5 | 10 | 15 | 20;
+type PeriodKey = "rps5" | "rps10" | "rps15" | "rps20";
+type SortKey = "code" | "return20_pct" | PeriodKey | "latest_close";
+type SortDirection = "asc" | "desc";
 
-interface UserSector { code: string; name: string; constituents: string[]; created_at: number; updated_at: number; }
-interface ConstituentRps { code: string; name: string; rps5: number | null; rps10: number | null; rps15: number | null; rps20: number | null; }
-interface SectorRps {
-  code: string; name: string; trade_date: string | null;
-  constituent_count: number; matched_count: number; missing_codes: string[];
-  rps5: number | null; rps10: number | null; rps15: number | null; rps20: number | null;
-  constituents: ConstituentRps[]; computed_at: number;
-}
-type SortKey = "code" | "name" | "rps5" | "rps10" | "rps15" | "rps20" | "matched_count";
+const PERIODS: Period[] = [5, 10, 15, 20];
+const PAGE_SIZE = 50;
 
-const PERIODS: { key: "rps5" | "rps10" | "rps15" | "rps20"; label: string }[] = [
-  { key: "rps5", label: "RPS5" },
-  { key: "rps10", label: "RPS10" },
-  { key: "rps15", label: "RPS15" },
-  { key: "rps20", label: "RPS20" },
-];
-
-function rpsTone(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "text-muted-foreground/60";
-  if (v >= 95) return "font-bold text-danger";
-  if (v >= 90) return "font-semibold text-primary";
-  if (v >= 80) return "text-primary/90";
-  if (v >= 60) return "text-foreground/80";
-  if (v >= 30) return "text-muted-foreground";
-  return "text-muted-foreground/70";
-}
-function fmtPct(v: number | null | undefined, d = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toFixed(d);
+function rpsKey(period: Period): PeriodKey {
+  return `rps${period}` as PeriodKey;
 }
 
-const PRESETS_TEXT = [
-  "880301 煤炭", "880305 电力", "880318 钢铁", "880324 有色",
-  "880372 食品饮料", "880387 家用电器", "880398 医疗保健", "880471 银行",
-  "880491 半导体", "880544 光伏", "880545 云计算", "880705 氢能源",
-  "880703 人形机器人", "880952 芯片", "881121 半导体", "881262 电池",
-  "881268 电网设备"
-].join("\n");
+function rpsTone(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "text-muted-foreground/50";
+  if (value >= 95) return "font-bold text-danger";
+  if (value >= 90) return "font-semibold text-primary";
+  if (value >= 80) return "text-primary/90";
+  return "text-foreground/75";
+}
+
+function returnTone(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return "text-muted-foreground";
+  return value > 0 ? "text-danger" : "text-success";
+}
+
+function formatNumber(value: number | null | undefined, digits = 2): string {
+  return value == null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
+}
+
+function formatReturn(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function emptyRow(source: SectorSource): SectorStrengthRow {
+  return {
+    code: source.code,
+    name: source.name,
+    trade_date: null,
+    latest_close: null,
+    bar_count: 0,
+    status: "unavailable",
+    error: "RPS 尚未计算",
+    rps5: null,
+    rps10: null,
+    rps15: null,
+    rps20: null,
+    return5_pct: null,
+    return10_pct: null,
+    return15_pct: null,
+    return20_pct: null,
+  };
+}
 
 export function SectorStrength() {
-  const [sectors, setSectors] = useState<UserSector[]>([]);
-  const [rpsList, setRpsList] = useState<SectorRps[]>([]);
-  const [tradeDate, setTradeDate] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [sources, setSources] = useState<SectorSource[]>([]);
+  const [snapshot, setSnapshot] = useState<SectorStrengthSnapshot | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("rps20");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [search, setSearch] = useState("");
+  const [showUnavailable, setShowUnavailable] = useState(true);
+  const [page, setPage] = useState(1);
+  const [loadingSources, setLoadingSources] = useState(true);
+  const [loadingRps, setLoadingRps] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
+
+  const [formOpen, setFormOpen] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [formCode, setFormCode] = useState("");
   const [formName, setFormName] = useState("");
-  const [formConstituents, setFormConstituents] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("rps20");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [search, setSearch] = useState("");
-  const [expandedCode, setExpandedCode] = useState<string | null>(null);
 
-  const reload = async () => {
-    setRefreshing(true); setError(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+
+  const load = useCallback(async (forceRefresh = false) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestId = ++requestIdRef.current;
+    setError(null);
+    if (forceRefresh) setRefreshing(true);
+    else {
+      setLoadingSources(true);
+      setLoadingRps(true);
+    }
+
     try {
-      const list = await fetchJson<UserSector[]>("/api/user-sectors");
-      setSectors(list);
+      const nextSources = await api.sectorSources(controller.signal);
+      if (requestId !== requestIdRef.current) return;
+      setSources(nextSources);
+      setLoadingSources(false);
       try {
-        const rps = await fetchJson<SectorRps[]>("/api/user-sectors/rps");
-        setRpsList(rps);
-        setTradeDate(rps[0]?.trade_date ?? null);
-      } catch (e) { console.warn("RPS load failed", e); }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "加载板块列表失败");
-    } finally { setLoading(false); setRefreshing(false); }
+        const nextSnapshot = await api.sectorStrength(forceRefresh, controller.signal);
+        if (requestId !== requestIdRef.current) return;
+        setSnapshot(nextSnapshot);
+      } catch (reason) {
+        if ((reason as Error)?.name === "AbortError") return;
+        if (requestId !== requestIdRef.current) return;
+        setError(reason instanceof Error ? reason.message : "通达信板块 RPS 加载失败");
+      } finally {
+        if (requestId === requestIdRef.current) setLoadingRps(false);
+      }
+    } catch (reason) {
+      if ((reason as Error)?.name === "AbortError") return;
+      if (requestId !== requestIdRef.current) return;
+      setError(reason instanceof Error ? reason.message : "板块基础数据源加载失败");
+      setLoadingSources(false);
+      setLoadingRps(false);
+    } finally {
+      if (requestId === requestIdRef.current) setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(false);
+    return () => abortRef.current?.abort();
+  }, [load]);
+
+  const rows = useMemo(() => {
+    const byCode = new Map((snapshot?.rows ?? []).map(row => [row.code, row]));
+    return sources.map(source => {
+      const computed = byCode.get(source.code);
+      return computed ? { ...computed, name: source.name } : emptyRow(source);
+    });
+  }, [snapshot, sources]);
+
+  const displayedRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return rows
+      .filter(row => showUnavailable || row.status === "ok")
+      .filter(row => !query || row.code.includes(query) || row.name.toLowerCase().includes(query))
+      .sort((a, b) => {
+        const av = a[sortKey];
+        const bv = b[sortKey];
+        if (av == null && bv == null) return a.code.localeCompare(b.code);
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        const comparison = typeof av === "string"
+          ? av.localeCompare(String(bv), "zh-CN")
+          : av - Number(bv);
+        return (sortDirection === "asc" ? comparison : -comparison) || a.code.localeCompare(b.code);
+      });
+  }, [rows, search, showUnavailable, sortDirection, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(displayedRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(
+    () => displayedRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [currentPage, displayedRows],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, showUnavailable, sortDirection, sortKey]);
+
+  const changeSort = (nextKey: SortKey) => {
+    if (sortKey === nextKey) {
+      setSortDirection(direction => direction === "desc" ? "asc" : "desc");
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === "code" ? "asc" : "desc");
   };
-  useEffect(() => { void reload(); }, []);
 
   const openAdd = () => {
-    setShowAddForm(true); setEditingCode(null);
-    setFormCode(""); setFormName(""); setFormConstituents("");
+    setEditingCode(null);
+    setFormCode("");
+    setFormName("");
     setFormError(null);
+    setFormOpen(true);
   };
-  const openEdit = (sector: UserSector) => {
-    setEditingCode(sector.code); setShowAddForm(false);
-    setFormCode(sector.code); setFormName(sector.name);
-    setFormConstituents(sector.constituents.join("\n"));
+
+  const openEdit = (source: SectorSource) => {
+    setEditingCode(source.code);
+    setFormCode(source.code);
+    setFormName(source.name);
     setFormError(null);
+    setFormOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const cancelForm = () => { setShowAddForm(false); setEditingCode(null); setFormError(null); };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditingCode(null);
+    setFormError(null);
+  };
 
   const submitForm = async () => {
+    const code = formCode.trim();
+    const name = formName.trim();
     setFormError(null);
-    if (!/^\d{6}$/.test(formCode.trim())) { setFormError("板块代码必须是 6 位数字"); return; }
-    if (!formName.trim()) { setFormError("板块名称不能为空"); return; }
+    if (!/^\d{6}$/.test(code)) {
+      setFormError("板块代码必须是 6 位数字");
+      return;
+    }
+    if (!name) {
+      setFormError("板块名称不能为空");
+      return;
+    }
     setSubmitting(true);
     try {
-      if (editingCode) {
-        await fetchJson(`/api/user-sectors/${editingCode}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: formName.trim(), constituents: formConstituents }),
-        });
-      } else {
-        await fetchJson("/api/user-sectors", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: formCode.trim(), name: formName.trim(), constituents: formConstituents }),
-        });
-      }
-      cancelForm(); void reload();
-    } catch (e) { setFormError(e instanceof Error ? e.message : "保存失败"); }
-    finally { setSubmitting(false); }
+      if (editingCode) await api.updateSectorSource(editingCode, { code, name });
+      else await api.addSectorSource({ code, name });
+      closeForm();
+      await load(true);
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : "保存失败");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleDelete = async (code: string, name: string) => {
-    if (!window.confirm(`确认删除板块 「${code} ${name}」？此操作不可撤销。`)) return;
+  const deleteSource = async (source: SectorSource) => {
+    if (!window.confirm(`确认删除板块数据源「${source.code} ${source.name}」？`)) return;
     try {
-      await fetchJson(`/api/user-sectors/${code}`, { method: "DELETE" });
-      if (expandedCode === code) setExpandedCode(null);
-      void reload();
-    } catch (e) { alert(e instanceof Error ? e.message : "删除失败"); }
+      await api.deleteSectorSource(source.code);
+      await load(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "删除失败");
+    }
   };
 
-  const merged = useMemo(() => {
-    const rpsByCode = new Map(rpsList.map(r => [r.code, r]));
-    return sectors.map(s => {
-      const r = rpsByCode.get(s.code);
-      return {
-        ...s,
-        rps5:  r?.rps5  ?? null,
-        rps10: r?.rps10 ?? null,
-        rps15: r?.rps15 ?? null,
-        rps20: r?.rps20 ?? null,
-        matched_count: r?.matched_count ?? 0,
-        missing_codes: r?.missing_codes ?? [],
-        constituents_detail: r?.constituents ?? [],
-      } as any;
-    });
-  }, [sectors, rpsList]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return merged;
-    return merged.filter(s => s.name.toLowerCase().includes(q) || s.code.includes(q));
-  }, [merged, search]);
-
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a: any, b: any) => {
-      const av = a[sortKey], bv = b[sortKey];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === "number" && typeof bv === "number") return sortDir === "asc" ? av - bv : bv - av;
-      return sortDir === "asc" ? String(av).localeCompare(String(bv), "zh") : String(bv).localeCompare(String(av), "zh");
-    });
-    return arr;
-  }, [filtered, sortKey, sortDir]);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey !== key) { setSortKey(key); setSortDir("desc"); return; }
-    setSortDir(sortDir === "desc" ? "asc" : "desc");
-  };
-
-  const SortHead = ({ k, label, align = "right" }: { k: SortKey; label: string; align?: "left" | "right" }) => {
-    const active = sortKey === k;
-    return (
-      <th onClick={() => toggleSort(k)} className={cn(
-        "whitespace-nowrap px-3 py-2.5 font-medium select-none cursor-pointer hover:text-foreground transition-colors",
-        align === "right" && "text-right"
-      )}>
-        <span className="inline-flex items-center gap-1">
-          {label}
-          <span className={cn("text-[10px] leading-none", active ? "text-primary" : "text-muted-foreground/40")}>
-            {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
-          </span>
-        </span>
-      </th>
-    );
-  };
+  const sourceByCode = useMemo(() => new Map(sources.map(source => [source.code, source])), [sources]);
+  const computedAt = snapshot?.computed_at
+    ? new Date(snapshot.computed_at * 1000).toLocaleString("zh-CN", { hour12: false })
+    : null;
 
   return (
     <div>
-      <PageHeader title="板块强度" subtitle="通达信板块代码 + 用户自填成分股，RPS5/10/15/20 取中位数。" actions={
-        <button type="button" onClick={() => void reload()} disabled={loading || refreshing}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50">
-          <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-          刷新
-        </button>
-      } />
+      <PageHeader
+        title="板块强度"
+        subtitle="直接使用通达信板块日 K，计算 RPS5 / RPS10 / RPS15 / RPS20 横截面列表。"
+        actions={(
+          <button
+            type="button"
+            onClick={() => void load(true)}
+            disabled={loadingSources || loadingRps || refreshing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-4 w-4", (refreshing || loadingRps) && "animate-spin")} />
+            重新计算
+          </button>
+        )}
+      />
 
       <GlassCard className="mb-4 !p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Database className="h-4 w-4" />
-            <span>已配置 <span className="font-mono text-foreground">{sectors.length}</span> 个板块</span>
-            {tradeDate && (
-              <span className="ml-2 rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-primary">
-                RPS 基准日 {tradeDate}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <Database className="h-4 w-4" />
+              基础数据源 <strong className="font-mono text-foreground">{sources.length}</strong> 个
+            </span>
+            {snapshot?.trade_date && (
+              <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-primary">
+                RPS 基准日 {snapshot.trade_date}
               </span>
             )}
+            {snapshot && (
+              <span>
+                有效 <strong className="font-mono text-foreground">{snapshot.available_count}</strong>
+                {snapshot.unavailable_count > 0 && (
+                  <> · 异常 <strong className="font-mono text-warning">{snapshot.unavailable_count}</strong></>
+                )}
+              </span>
+            )}
+            {computedAt && <span>计算于 {computedAt}</span>}
           </div>
-          <div className="flex items-center gap-3 text-muted-foreground">
-            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-danger" /> ≥95 极强</span>
-            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-primary" /> ≥90 强</span>
-            <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" /> 中性</span>
-          </div>
+          <button
+            type="button"
+            onClick={openAdd}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+          >
+            <Plus className="h-3.5 w-3.5" /> 新增数据源
+          </button>
         </div>
       </GlassCard>
 
       {error && (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{error}</span>
+          <div>
+            <div>{error}</div>
+            <div className="mt-1 text-xs text-muted-foreground">基础代码和名称仍可维护；恢复通达信连接后点“重新计算”。</div>
+          </div>
         </div>
       )}
 
-      {(showAddForm || editingCode !== null) && (
+      {formOpen && (
         <GlassCard className="mb-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold">
-              {editingCode ? `编辑板块 ${editingCode}` : "新增板块"}
-            </h2>
-            <button onClick={cancelForm} className="rounded p-1 text-muted-foreground hover:text-foreground">
+            <div>
+              <h2 className="text-base font-semibold">{editingCode ? "修改板块数据源" : "新增板块数据源"}</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">代码与名称都会参与板块池；修改代码后会重新拉取通达信日 K。</p>
+            </div>
+            <button type="button" onClick={closeForm} className="rounded p-1 text-muted-foreground hover:text-foreground">
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-muted-foreground">板块代码 <span className="text-destructive">*</span></span>
-              <input type="text" inputMode="numeric" value={formCode} disabled={!!editingCode}
-                onChange={(e) => setFormCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          <div className="grid gap-3 sm:grid-cols-[220px_1fr]">
+            <label>
+              <span className="mb-1.5 block text-xs font-medium text-muted-foreground">板块代码</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={formCode}
+                onChange={event => setFormCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="如 880544"
-                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-sm outline-none focus:border-primary/50 disabled:opacity-60" />
+                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-sm outline-none focus:border-primary/50"
+              />
             </label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1.5 block text-xs font-medium text-muted-foreground">板块名称 <span className="text-destructive">*</span></span>
-              <input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} maxLength={40}
+            <label>
+              <span className="mb-1.5 block text-xs font-medium text-muted-foreground">板块名称</span>
+              <input
+                type="text"
+                value={formName}
+                onChange={event => setFormName(event.target.value)}
+                maxLength={40}
                 placeholder="如 光伏"
-                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
+                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+              />
             </label>
-          </div>
-
-          <div className="mt-3">
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="block text-xs font-medium text-muted-foreground">
-                成分股（A 股 6 位代码，换行 / 空格 / 逗号 / 分号分隔；可留空后填）
-              </span>
-              <button type="button" onClick={() => {
-                if (!window.confirm("将用预设板块代码填入成分股框？表单当前内容会丢失。")) return;
-                const codes = PRESETS_TEXT.split("\n").map(l => l.split(/\s+/)[0]).filter(Boolean);
-                setFormConstituents(codes.join("\n"));
-              }} className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-                <Sparkles className="h-3 w-3" /> 一键填入 17 个常用板块代码
-              </button>
-            </div>
-            <textarea value={formConstituents} onChange={(e) => setFormConstituents(e.target.value)} rows={6}
-              placeholder={"例如：\n600519\n000001\n600036"}
-              className="w-full rounded-lg border border-border bg-black/25 px-3 py-2 font-mono text-[12px] leading-5 outline-none focus:border-primary/50" />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              解析后将自动去重、非 6 位代码忽略。板块 RPS = 成分股 RPS 的<strong>中位数</strong>（剔除新股/异常更稳健）。
-            </p>
           </div>
           {formError && (
-            <div className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{formError}</span>
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{formError}
             </div>
           )}
           <div className="mt-3 flex justify-end gap-2">
-            <button type="button" onClick={cancelForm} className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">取消</button>
-            <button type="button" onClick={submitForm} disabled={submitting}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary transition hover:bg-primary/25 disabled:opacity-50">
+            <button type="button" onClick={closeForm} className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">取消</button>
+            <button
+              type="button"
+              onClick={() => void submitForm()}
+              disabled={submitting || refreshing}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary transition hover:bg-primary/25 disabled:opacity-50"
+            >
               {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              保存
+              保存并重算
             </button>
           </div>
         </GlassCard>
       )}
 
-      <GlassCard className="mb-4">
+      <GlassCard className="mb-4 !p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+          <div className="relative min-w-[210px] flex-1 sm:max-w-sm">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+            <input
+              type="text"
+              value={search}
+              onChange={event => setSearch(event.target.value)}
               placeholder="搜索板块代码 / 名称"
-              className="w-full rounded-lg border border-border bg-black/20 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50" />
+              className="w-full rounded-lg border border-border bg-black/20 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
+            />
           </div>
-          {!showAddForm && editingCode === null && (
-            <button type="button" onClick={openAdd}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-primary">
-              <Plus className="h-3.5 w-3.5" /> 新增板块
-            </button>
-          )}
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            点击表头排序；点击板块行展开成分股明细
-          </span>
+          <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={showUnavailable}
+              onChange={event => setShowUnavailable(event.target.checked)}
+              className="accent-primary"
+            />
+            显示无行情代码
+          </label>
         </div>
       </GlassCard>
 
-      {loading ? (
-        <GlassCard className="mb-4">
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> 加载板块列表…
+      {loadingSources ? (
+        <GlassCard>
+          <div className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
+            <LoaderCircle className="h-4 w-4 animate-spin" /> 加载板块基础数据源…
           </div>
         </GlassCard>
-      ) : sectors.length === 0 ? (
-        <GlassCard className="mb-4">
-          <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+      ) : sources.length === 0 ? (
+        <GlassCard>
+          <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
             <BarChart3 className="h-10 w-10 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">
-              还没有任何板块。在工具栏点「新增板块」，填写通达信板块代码和成分股即可开始追踪。
-            </p>
-            {!showAddForm && (
-              <button type="button" onClick={openAdd}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary hover:bg-primary/25">
-                <Plus className="h-4 w-4" /> 新增第一个板块
-              </button>
-            )}
+            <p className="text-sm text-muted-foreground">板块数据源为空，请先新增通达信板块代码和名称。</p>
+            <button type="button" onClick={openAdd} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm text-primary hover:bg-primary/25">
+              <Plus className="h-4 w-4" /> 新增第一个数据源
+            </button>
           </div>
         </GlassCard>
       ) : (
         <GlassCard className="!p-0 overflow-hidden">
-          <div className="max-h-[680px] overflow-auto">
-            <table className="w-full text-sm">
+          <div className="border-b border-border/50 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">RPS20 完整列表</h2>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  共 {displayedRows.length} 个板块；点击表头可切换排序，每页 {PAGE_SIZE} 条。
+                </p>
+              </div>
+              {loadingRps && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-primary">
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> 正在读取通达信板块日 K…
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="max-h-[760px] overflow-auto">
+            <table className="w-full min-w-[900px] text-sm">
               <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
                 <tr className="border-b border-border/60 text-left text-[11px] text-muted-foreground">
-                  <SortHead k="code" label="代码 / 名称" align="left" />
-                  <SortHead k="matched_count" label="成分股 命中" align="right" />
-                  {PERIODS.map(p => <SortHead key={p.key} k={p.key as SortKey} label={p.label} />)}
-                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium">操作</th>
+                  <th className="px-3 py-2.5 font-medium">序号</th>
+                  <SortHeader label="板块代码 / 名称" columnKey="code" sortKey={sortKey} direction={sortDirection} onSort={changeSort} align="left" />
+                  <SortHeader label="20日涨幅" columnKey="return20_pct" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+                  {PERIODS.map(period => (
+                    <SortHeader
+                      key={period}
+                      label={`RPS${period}`}
+                      columnKey={rpsKey(period)}
+                      sortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className={period === 20 ? "text-primary" : undefined}
+                    />
+                  ))}
+                  <SortHeader label="最新点位" columnKey="latest_close" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+                  <th className="px-3 py-2.5 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((s: any) => {
-                  const expanded = expandedCode === s.code;
+                {pagedRows.map((row, index) => {
+                  const source = sourceByCode.get(row.code);
+                  const rank = (currentPage - 1) * PAGE_SIZE + index + 1;
                   return (
-                    <RowGroup key={s.code} sector={s} expanded={expanded}
-                      onToggle={() => setExpandedCode(expanded ? null : s.code)}
-                      onEdit={() => openEdit(s)}
-                      onDelete={() => void handleDelete(s.code, s.name)} />
+                    <tr key={row.code} className="border-b border-border/30 transition-colors hover:bg-muted/20">
+                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{rank}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium">{row.name}</div>
+                        <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+                          <span>{row.code}</span>
+                          {row.status !== "ok" && (
+                            <span className="font-sans text-warning" title={row.error ?? undefined}>
+                              {row.status === "stale" ? "日线滞后" : "无日线"}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={cn("px-3 py-2.5 text-right font-mono", returnTone(row.return20_pct))}>
+                        {formatReturn(row.return20_pct)}
+                      </td>
+                      {PERIODS.map(period => (
+                        <td key={period} className={cn(
+                          "px-3 py-2.5 text-right font-mono",
+                          rpsTone(row[rpsKey(period)]),
+                          period === 20 && "bg-primary/[0.035]",
+                        )}>
+                          {formatNumber(row[rpsKey(period)])}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                        {formatNumber(row.latest_close, row.latest_close != null && row.latest_close < 10 ? 3 : 2)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        {source && (
+                          <div className="inline-flex gap-1">
+                            <button type="button" onClick={() => openEdit(source)} title="修改代码或名称" className="rounded-md p-1 text-muted-foreground transition hover:bg-muted/40 hover:text-primary">
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                            <button type="button" onClick={() => void deleteSource(source)} title="删除数据源" className="rounded-md p-1 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          {displayedRows.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between border-t border-border/50 px-4 py-3 text-xs text-muted-foreground">
+              <span>第 {currentPage} / {totalPages} 页</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage(value => Math.max(1, value - 1))}
+                  disabled={currentPage <= 1}
+                  className="rounded-lg border border-border px-3 py-1.5 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage(value => Math.min(totalPages, value + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="rounded-lg border border-border px-3 py-1.5 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
         </GlassCard>
       )}
 
-      {!loading && sectors.length > 0 && (
-        <p className="mt-3 text-[11px] text-muted-foreground">
-          <strong>提示：</strong>成分股为空时 RPS 显示为 —。RPS 计算走量化选股已构建的全市场快照（≥1 次/交易日），无需重复拉取行情。
+      {snapshot?.rule && (
+        <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
+          <strong>计算口径：</strong>{snapshot.rule}
         </p>
       )}
     </div>
   );
 }
 
-function RowGroup({ sector, expanded, onToggle, onEdit, onDelete }: {
-  sector: any; expanded: boolean; onToggle: () => void; onEdit: () => void; onDelete: () => void;
+function SortHeader({
+  label,
+  columnKey,
+  sortKey,
+  direction,
+  onSort,
+  align = "right",
+  className,
+}: {
+  label: string;
+  columnKey: SortKey;
+  sortKey: SortKey;
+  direction: SortDirection;
+  onSort: (key: SortKey) => void;
+  align?: "left" | "right";
+  className?: string;
 }) {
+  const active = sortKey === columnKey;
   return (
-    <>
-      <tr className="cursor-pointer border-b border-border/30 transition-colors hover:bg-muted/20" onClick={onToggle}>
-        <td className="px-3 py-2.5">
-          <div className="flex items-center gap-1.5">
-            {expanded ? <ChevronUp className="h-3.5 w-3.5 text-primary" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />}
-            <div>
-              <div className="font-medium">{sector.name || "—"}</div>
-              <div className="font-mono text-[11px] text-muted-foreground">{sector.code}</div>
-            </div>
-          </div>
-        </td>
-        <td className="px-3 py-2.5 text-right font-mono">
-          <span className={cn(sector.matched_count === 0 && "text-muted-foreground/60")}>{sector.matched_count}</span>
-          <span className="text-muted-foreground/50"> / {sector.constituents.length}</span>
-        </td>
-        {PERIODS.map(p => (
-          <td key={p.key} className={cn("px-3 py-2.5 text-right font-mono", rpsTone(sector[p.key]))}>
-            {fmtPct(sector[p.key])}
-          </td>
-        ))}
-        <td className="whitespace-nowrap px-3 py-2.5 text-right">
-          <div className="inline-flex gap-1" onClick={(e) => e.stopPropagation()}>
-            <button type="button" onClick={onEdit} title="编辑"
-              className="rounded-md p-1 text-muted-foreground transition hover:bg-muted/40 hover:text-primary">
-              <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button type="button" onClick={onDelete} title="删除"
-              className="rounded-md p-1 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive">
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {expanded && (
-        <tr className="border-b border-border/30 bg-black/15">
-          <td colSpan={6} className="px-3 py-3"><ExpandedDetail sector={sector} /></td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function ExpandedDetail({ sector }: { sector: any }) {
-  const constituents: string[] = sector.constituents ?? [];
-  const detail: ConstituentRps[] = sector.constituents_detail ?? [];
-  const missing: string[] = sector.missing_codes ?? [];
-  const detailByCode = new Map(detail.map(d => [d.code, d]));
-
-  if (constituents.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        还没有成分股。在表格行右边点「编辑」粘贴 A 股代码即可计算 RPS。
-      </p>
-    );
-  }
-
-  const rows = ([...constituents].map(code => detailByCode.get(code)).filter(Boolean) as ConstituentRps[]);
-  rows.sort((a, b) => (b.rps20 ?? -1) - (a.rps20 ?? -1));
-
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1">
-          <TrendingUp className="h-3 w-3 text-primary" />
-          共 {constituents.length} 只，按 RPS20 降序
-        </span>
-        {missing.length > 0 && (
-          <span className="inline-flex items-center gap-1 text-warning">
-            <AlertTriangle className="h-3 w-3" />{missing.length} 只未命中快照（新股或未上市满 1 年）
-          </span>
+    <th
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+      className={cn("px-3 py-2.5 font-medium", align === "right" && "text-right", className)}
+    >
+      <button
+        type="button"
+        aria-label={`按${label}排序`}
+        onClick={() => onSort(columnKey)}
+        className={cn(
+          "inline-flex items-center gap-1 transition hover:text-primary",
+          align === "right" && "justify-end",
+          active && "text-primary",
         )}
-      </div>
-      {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">无成分股命中 RPS 快照，请确认股票代码。</p>
-      ) : (
-        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {rows.map(c => (
-            <div key={c.code} className="flex items-center justify-between gap-2 rounded-lg border border-border/40 bg-card/40 px-2.5 py-1.5 text-[11px]">
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{c.name || c.code}</div>
-                <div className="font-mono text-muted-foreground">{c.code}</div>
-              </div>
-              <div className="flex shrink-0 gap-1.5 font-mono">
-                <span className={cn("w-9 text-right", rpsTone(c.rps5))}>{fmtPct(c.rps5, 0)}</span>
-                <span className={cn("w-9 text-right", rpsTone(c.rps10))}>{fmtPct(c.rps10, 0)}</span>
-                <span className={cn("w-9 text-right", rpsTone(c.rps15))}>{fmtPct(c.rps15, 0)}</span>
-                <span className={cn("w-9 text-right", rpsTone(c.rps20))}>{fmtPct(c.rps20, 0)}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+      >
+        <span>{label}</span>
+        {active
+          ? direction === "asc"
+            ? <ArrowUp className="h-3 w-3" />
+            : <ArrowDown className="h-3 w-3" />
+          : <ArrowUpDown className="h-3 w-3 opacity-50" />}
+      </button>
+    </th>
   );
-}
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(url, init);
-  let payload: any = null;
-  try { payload = await resp.json(); } catch {}
-  if (!resp.ok) {
-    const detail = payload?.detail;
-    const msg = typeof detail === "string" ? detail
-              : Array.isArray(detail) ? detail.map((d: any) => d.msg).join("; ")
-              : payload?.message || `HTTP ${resp.status}`;
-    throw new Error(msg);
-  }
-  return (payload?.data ?? payload) as T;
 }

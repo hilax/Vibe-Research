@@ -51,7 +51,7 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE" = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
   const opts: RequestInit = { method };
@@ -378,6 +378,44 @@ export interface QaRow { company: string; question: string; answer: string | nul
 export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
+// 通达信板块强度：用户维护代码/名称，后端直接按板块日 K 计算横截面 RPS。
+export interface SectorSource {
+  code: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface SectorStrengthRow {
+  code: string;
+  name: string;
+  trade_date: string | null;
+  latest_close: number | null;
+  bar_count: number;
+  status: "ok" | "stale" | "unavailable";
+  error: string | null;
+  rps5: number | null;
+  rps10: number | null;
+  rps15: number | null;
+  rps20: number | null;
+  return5_pct: number | null;
+  return10_pct: number | null;
+  return15_pct: number | null;
+  return20_pct: number | null;
+}
+export interface SectorStrengthSnapshot {
+  version: number;
+  source: string;
+  trade_date: string | null;
+  computed_at: number;
+  source_count: number;
+  available_count: number;
+  unavailable_count: number;
+  ranked_count_by_period: Record<string, number>;
+  periods: number[];
+  rule: string;
+  rows: SectorStrengthRow[];
+}
+
 export type QuantStrategy =
   | "near_high"
   | "monthly_reversal_62"
@@ -584,6 +622,16 @@ export const api = {
   hotConcepts: (code: string) => get<HotConcept[]>(`/hot-concepts?code=${code}`),
   investorQa: (code: string) => get<QaRow[]>(`/investor-qa?code=${code}`),
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
+  sectorSources: (signal?: AbortSignal) =>
+    request<SectorSource[]>("/user-sectors", "GET", undefined, signal),
+  sectorStrength: (refresh = false, signal?: AbortSignal) =>
+    request<SectorStrengthSnapshot>(`/user-sectors/rps?refresh=${refresh ? "true" : "false"}`, "GET", undefined, signal),
+  addSectorSource: (input: { code: string; name: string }) =>
+    request<SectorSource>("/user-sectors", "POST", input),
+  updateSectorSource: (code: string, input: { code: string; name: string }) =>
+    request<SectorSource>(`/user-sectors/${encodeURIComponent(code)}`, "PUT", input),
+  deleteSectorSource: (code: string) =>
+    request<{ deleted: string }>(`/user-sectors/${encodeURIComponent(code)}`, "DELETE"),
   quantScreen: (input: QuantScreenInput) =>
     request<QuantScreenResult>("/quant/screen", "POST", input),
   quantFormulas: () => get<TdxFormulaPreset[]>("/quant/formulas"),

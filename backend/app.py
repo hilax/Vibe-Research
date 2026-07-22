@@ -59,7 +59,7 @@ _ORIGINS = [o.strip() for o in os.environ.get("VR_ALLOW_ORIGINS", "*").split(","
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -1127,30 +1127,29 @@ def industry(top: int = Query(20, ge=5, le=50)):
 
 
 # ── 用户自维护板块强度（RPS5/10/15/20） ─────────────────────────────────
-# 通达信 88xxxx/881xxx 板块本身没有公开的实时行情 API，要算板块 RPS 必须由用户
-# 给出成分股列表，再用全市场 RPS 快照（已经在量化选股里构建好）取中位数聚合。
+# 数据源是可增删改的通达信板块/指数/ETF 代码与名称；每个代码直接读取通达信日 K，
+# 按 5/10/15/20 日涨幅在同一板块池内计算横截面 RPS。
 
 class UserSectorUpsertReq(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
     name: str = Field(min_length=1, max_length=40)
-    constituents: str | list[str] = Field(default="", max_length=200000)
 
 
 class UserSectorUpdateReq(BaseModel):
+    code: str | None = Field(default=None, pattern=r"^\d{6}$")
     name: str | None = Field(default=None, min_length=1, max_length=40)
-    constituents: str | list[str] | None = None
 
 
 @app.get("/api/user-sectors")
 def user_sectors_list():
-    """返回用户已配置的板块列表（含成分股代码）。"""
+    """返回可维护的通达信板块基础数据源。"""
     return {"data": user_sectors.list_sectors()}
 
 
 @app.post("/api/user-sectors")
 def user_sectors_add(req: UserSectorUpsertReq):
     try:
-        sector = user_sectors.add_sector(req.code, req.name, req.constituents)
+        sector = user_sectors.add_sector(req.code, req.name)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return {"data": sector}
@@ -1161,8 +1160,8 @@ def user_sectors_update(code: str, req: UserSectorUpdateReq):
     try:
         sector = user_sectors.update_sector(
             code,
+            new_code=req.code,
             name=req.name,
-            constituents=req.constituents,
         )
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
@@ -1180,34 +1179,24 @@ def user_sectors_delete(code: str):
 
 
 @app.get("/api/user-sectors/{code}/rps")
-def user_sector_rps(code: str):
-    """单板块 RPS：从全市场 RPS 快照聚合成分股的中位数 RPS5/10/15/20。"""
+def user_sector_rps(code: str, refresh: bool = Query(False)):
+    """返回单个通达信板块在当前板块池内的 RPS5/10/15/20。"""
     try:
-        snap = quant.rps_snapshot()
-    except quant.QuantDataError as e:
-        raise HTTPException(503, f"RPS 快照不可用：{e}") from e
-    if not snap.get("ready") if isinstance(snap, dict) else False:
-        # rps_snapshot() 内部若走预热会一直阻塞；这里再保险一下
-        pass
-    data = user_sectors.compute_sector_rps(code)
+        data = user_sectors.compute_sector_rps(code, force_refresh=refresh)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    except user_sectors.SectorDataError as e:
+        raise HTTPException(502, f"通达信板块 RPS 数据源异常：{e}") from e
     if data is None:
         raise HTTPException(404, f"未找到板块 {code}")
     return {"data": data}
 
 
 @app.get("/api/user-sectors/rps")
-def user_sectors_all_rps():
-    """一次性计算所有用户板块的 RPS（用于列表页直接渲染表格）。"""
+def user_sectors_all_rps(refresh: bool = Query(False)):
+    """计算全部板块的 RPS5/10/15/20 列表；refresh=true 强制重拉通达信日 K。"""
     try:
-        snap = quant.rps_snapshot()
-    except quant.QuantDataError as e:
-        raise HTTPException(503, f"RPS 快照不可用：{e}") from e
-    return {"data": user_sectors.compute_all_sector_rps()}
-
-
-@app.post("/api/user-sectors/bulk-from-tdx")
-def user_sectors_bulk_from_tdx():
-    """把用户提供的通达信板块代码 → 名称映射批量导入（仅 code+name，成分股留空）。
-    请求体: {\"items\": [{\"code\": \"880544\", \"name\": \"光伏\"}, ...]}"""
-    # 直接读最近一次上传的 raw 数据即可，省一个 schema：复用 GET 列表手动导入
-    raise HTTPException(501, "请使用 /api/user-sectors 单条添加；批量导入可在 UI 内粘贴")
+        data = user_sectors.compute_all_sector_rps(force_refresh=refresh)
+    except user_sectors.SectorDataError as e:
+        raise HTTPException(502, f"通达信板块 RPS 数据源异常：{e}") from e
+    return {"data": data}

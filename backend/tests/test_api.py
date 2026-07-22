@@ -29,6 +29,69 @@ def test_industry_top_range():
     assert client.get("/api/industry?top=999").status_code == 422  # le=50
 
 
+def test_user_sector_source_crud_contract(monkeypatch):
+    monkeypatch.setattr(
+        app_module.user_sectors,
+        "add_sector",
+        lambda code, name: {"code": code, "name": name, "created_at": 1, "updated_at": 1},
+    )
+    created = client.post("/api/user-sectors", json={"code": "880544", "name": "光伏"})
+    assert created.status_code == 200
+    assert created.json()["data"]["code"] == "880544"
+
+    received = {}
+
+    def update(code, *, new_code=None, name=None):
+        received.update({"old_code": code, "new_code": new_code, "name": name})
+        return {"code": new_code or code, "name": name, "created_at": 1, "updated_at": 2}
+
+    monkeypatch.setattr(app_module.user_sectors, "update_sector", update)
+    updated = client.put("/api/user-sectors/880544", json={"code": "880545", "name": "云计算"})
+    assert updated.status_code == 200
+    assert received == {"old_code": "880544", "new_code": "880545", "name": "云计算"}
+
+    monkeypatch.setattr(app_module.user_sectors, "delete_sector", lambda code: code == "880545")
+    assert client.delete("/api/user-sectors/880545").status_code == 200
+    assert client.delete("/api/user-sectors/880544").status_code == 404
+
+
+def test_user_sector_source_validation():
+    assert client.post("/api/user-sectors", json={"code": "88054", "name": "光伏"}).status_code == 422
+    assert client.post("/api/user-sectors", json={"code": "880544", "name": ""}).status_code == 422
+
+
+def test_user_sector_rps_contract_and_upstream_failure(monkeypatch):
+    payload = {
+        "version": 2,
+        "source": "通达信板块/指数日 K",
+        "trade_date": "2026-07-22",
+        "computed_at": 1,
+        "source_count": 1,
+        "available_count": 1,
+        "unavailable_count": 0,
+        "ranked_count_by_period": {"5": 1, "10": 1, "15": 1, "20": 1},
+        "periods": [5, 10, 15, 20],
+        "rule": "test",
+        "rows": [],
+    }
+    monkeypatch.setattr(
+        app_module.user_sectors,
+        "compute_all_sector_rps",
+        lambda force_refresh=False: {**payload, "forced": force_refresh},
+    )
+    response = client.get("/api/user-sectors/rps?refresh=true")
+    assert response.status_code == 200
+    assert response.json()["data"]["forced"] is True
+
+    def fail(*, force_refresh=False):
+        raise app_module.user_sectors.SectorDataError("tdx down")
+
+    monkeypatch.setattr(app_module.user_sectors, "compute_all_sector_rps", fail)
+    failed = client.get("/api/user-sectors/rps")
+    assert failed.status_code == 502
+    assert "通达信板块 RPS 数据源异常" in failed.json()["detail"]
+
+
 def test_chat_empty_messages_400():
     r = client.post("/api/chat", json={"messages": [], "llm": {"model": "x", "baseURL": "http://x", "apiKey": "k"}})
     assert r.status_code == 400
