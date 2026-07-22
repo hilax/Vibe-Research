@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 
 // A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致，
 // 对中国用户最不易看错（Simon 2026-07-05 确认；非国际绿涨惯例，是有意选择，勿改）。
-const pctColor = (p: number) => (p > 0 ? "text-danger" : p < 0 ? "text-success" : "text-muted-foreground");
+const pctColor = (p: number) => (p > 0 ? "text-market-up" : p < 0 ? "text-market-down" : "text-muted-foreground");
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
 
@@ -280,7 +280,7 @@ export function DailyReview() {
               {sentCells.map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2 text-center">
                   <p className="truncate text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-danger" : "text-success")}>{c.v}</p>
+                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-market-up" : "text-market-down")}>{c.v}</p>
                 </div>
               ))}
             </div>
@@ -302,8 +302,8 @@ export function DailyReview() {
             {/* 关键计数 */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                { k: "涨停", v: `${emotion.zt_count}`, cls: "text-danger" },
-                { k: "跌停", v: `${emotion.dt_count}`, cls: "text-success" },
+                { k: "涨停", v: `${emotion.zt_count}`, cls: "text-market-up" },
+                { k: "跌停", v: `${emotion.dt_count}`, cls: "text-market-down" },
                 { k: "最高连板", v: `${emotion.max_boards} 板`, cls: "text-primary" },
                 { k: "连板（2板+）", v: `${emotion.lianban_count} 家`, cls: "text-primary" },
               ].map((c) => (
@@ -322,7 +322,7 @@ export function DailyReview() {
               ].map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2.5 text-center">
                   <p className="text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.strong ? "text-danger" : "text-success")}>
+                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.strong ? "text-market-up" : "text-market-down")}>
                     {c.v == null ? "—" : `${(c.v * 100).toFixed(1)}%`}
                   </p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground/50">{c.hint}</p>
@@ -350,7 +350,7 @@ export function DailyReview() {
                           <td className="px-2 py-2"><span className="font-medium">{s.name}</span> <span className="text-xs text-muted-foreground/50">{s.code}</span></td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono font-bold text-primary">{s.boards} 板</td>
                           <td className="px-2 py-2 font-mono">{s.price}</td>
-                          <td className="px-2 py-2 font-mono text-danger">+{s.pct}%</td>
+                          <td className="px-2 py-2 font-mono text-market-up">+{s.pct}%</td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.amount)}</td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.float_cap)}</td>
                           <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
@@ -446,8 +446,8 @@ export function DailyReview() {
       </div>
       <div className="mb-2 grid gap-4 md:grid-cols-2">
         {[
-          { title: "流入 Top", icon: TrendingUp, color: "text-danger", rows: sectors.slice(0, 6) },
-          { title: "流出 Top", icon: TrendingDown, color: "text-success", rows: [...sectors].slice(-6).reverse() },
+          { title: "流入 Top", icon: TrendingUp, color: "text-market-up", rows: sectors.slice(0, 6) },
+          { title: "流出 Top", icon: TrendingDown, color: "text-market-down", rows: [...sectors].slice(-6).reverse() },
         ].map((col) => (
           <GlassCard key={col.title}>
             <h4 className={cn("mb-3 flex items-center gap-1.5 text-sm font-semibold", col.color)}><col.icon className="h-4 w-4" /> {col.title}</h4>

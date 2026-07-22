@@ -25,7 +25,7 @@ const fmt = (v: number | null | undefined, suffix = "") =>
 
 // A股红涨绿跌（中国平台看美港股也用此惯例）
 const pctColor = (p: number | null | undefined) =>
-  p != null && p > 0 ? "text-danger" : p != null && p < 0 ? "text-success" : "text-muted-foreground";
+  p != null && p > 0 ? "text-market-up" : p != null && p < 0 ? "text-market-down" : "text-muted-foreground";
 const pctStr = (p: number | null | undefined) => (p == null ? "—" : `${p > 0 ? "+" : ""}${p}%`);
 // 美/港股金额（原生币种）
 const curOf = (market: string) => (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");
@@ -466,7 +466,7 @@ export function StockData() {
                       <div key={i} className="flex items-center gap-3 text-xs">
                         <span className="w-20 shrink-0 font-mono text-muted-foreground">{b.date}</span>
                         <span className="w-14 shrink-0">{b.price} 元</span>
-                        <span className={cn("w-20 shrink-0", b.premium_pct >= 0 ? "text-danger" : "text-success")}>折溢 {b.premium_pct}%</span>
+                        <span className={cn("w-20 shrink-0", b.premium_pct >= 0 ? "text-market-up" : "text-market-down")}>折溢 {b.premium_pct}%</span>
                         <span className="flex-1 truncate text-muted-foreground">买 {b.buyer} · 卖 {b.seller}</span>
                       </div>
                     ))}
@@ -486,20 +486,20 @@ export function StockData() {
                   <div key={i} className="flex items-center gap-3 border-b border-border/40 pb-2 text-sm last:border-0">
                     <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">{r.date}</span>
                     <span className="flex-1 truncate">{r.reason}</span>
-                    <span className={cn("shrink-0 font-mono text-xs", r.net_buy >= 0 ? "text-danger" : "text-success")}>净买 {r.net_buy} 万</span>
+                    <span className={cn("shrink-0 font-mono text-xs", r.net_buy >= 0 ? "text-market-up" : "text-market-down")}>净买 {r.net_buy} 万</span>
                   </div>
                 ))}
               </div>
               {(dt.seats.buy.length > 0 || dt.seats.sell.length > 0) && (
                 <div className="mt-3 grid gap-4 border-t border-border/40 pt-3 sm:grid-cols-2">
                   <div>
-                    <p className="mb-1.5 text-xs font-medium text-danger">买入席位 TOP</p>
+                    <p className="mb-1.5 text-xs font-medium text-market-up">买入席位 TOP</p>
                     {dt.seats.buy.map((s, i) => (
                       <div key={i} className="flex justify-between gap-2 text-xs text-muted-foreground"><span className="truncate">{s.name}</span><span className="shrink-0 font-mono">净{s.net}万</span></div>
                     ))}
                   </div>
                   <div>
-                    <p className="mb-1.5 text-xs font-medium text-success">卖出席位 TOP</p>
+                    <p className="mb-1.5 text-xs font-medium text-market-down">卖出席位 TOP</p>
                     {dt.seats.sell.map((s, i) => (
                       <div key={i} className="flex justify-between gap-2 text-xs text-muted-foreground"><span className="truncate">{s.name}</span><span className="shrink-0 font-mono">净{s.net}万</span></div>
                     ))}

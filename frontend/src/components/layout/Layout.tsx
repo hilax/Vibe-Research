@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import {
   Activity, Radar, LayoutGrid, Wallet, Settings, Search, NotebookPen,
-  Moon, Sun, ChevronsLeft, ChevronsRight, LineChart,
+  EyeOff, Moon, Palette, Sun, ChevronsLeft, ChevronsRight, LineChart,
   Cog, Cpu, Database, Cable, Rocket, FlaskConical, Star, FileText,
   SlidersHorizontal, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useMarketPalette } from "@/hooks/useMarketPalette";
 
 const APP_VERSION = "v0.1.3";
 
@@ -38,6 +39,7 @@ const SECTOR_LINKS = [
 export function Layout() {
   const { pathname } = useLocation();
   const { dark, toggle } = useDarkMode();
+  const { subtle, toggle: toggleMarketPalette } = useMarketPalette();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("vr-sidebar") === "collapsed");
 
   useEffect(() => {
@@ -122,6 +124,15 @@ export function Layout() {
               <button onClick={toggle} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={dark ? "亮色" : "暗色"}>
                 {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
+              <button
+                type="button"
+                onClick={toggleMarketPalette}
+                aria-pressed={subtle}
+                className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                title={subtle ? "恢复涨红跌绿" : "切换为低调涨跌色"}
+              >
+                {subtle ? <Palette className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              </button>
               <button onClick={() => setCollapsed(false)} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title="展开">
                 <ChevronsRight className="h-4 w-4" />
               </button>
@@ -129,10 +140,22 @@ export function Layout() {
           ) : (
             <>
               <div className="flex items-center justify-between">
-                <button onClick={toggle} className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                  {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                  {dark ? "亮色" : "暗色"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button onClick={toggle} className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                    {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                    {dark ? "亮色" : "暗色"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleMarketPalette}
+                    aria-pressed={subtle}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    title={subtle ? "恢复涨红跌绿" : "切换为低调涨跌色"}
+                  >
+                    {subtle ? <Palette className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                    {subtle ? "涨跌色" : "低调色"}
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setCollapsed(true)} className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground" title="收起">
                     <ChevronsLeft className="h-3.5 w-3.5" />

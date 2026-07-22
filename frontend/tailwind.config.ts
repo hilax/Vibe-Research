@@ -16,6 +16,8 @@ export default {
         card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
         success: "hsl(var(--success))",
         danger: "hsl(var(--danger))",
+        "market-up": "hsl(var(--market-up))",
+        "market-down": "hsl(var(--market-down))",
         warning: "hsl(var(--warning))",
         info: "hsl(var(--info))",
       },

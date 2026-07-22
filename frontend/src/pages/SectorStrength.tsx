@@ -39,15 +39,15 @@ function rpsKey(period: Period): PeriodKey {
 
 function rpsTone(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "text-muted-foreground/50";
-  if (value >= 95) return "font-bold text-danger";
-  if (value >= 90) return "font-semibold text-primary";
-  if (value >= 80) return "text-primary/90";
+  if (value >= 95) return "font-bold text-market-up";
+  if (value >= 90) return "font-semibold text-market-up/90";
+  if (value >= 80) return "text-market-up/75";
   return "text-foreground/75";
 }
 
 function returnTone(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value === 0) return "text-muted-foreground";
-  return value > 0 ? "text-danger" : "text-success";
+  return value > 0 ? "text-market-up" : "text-market-down";
 }
 
 function formatNumber(value: number | null | undefined, digits = 2): string {

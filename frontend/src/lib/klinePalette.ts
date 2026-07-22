@@ -3,6 +3,14 @@
 
 export const KLINE_RED = "#ef4444";
 export const KLINE_GREEN = "#22c55e";
+export const KLINE_SUBTLE_UP = "#9b8c84";
+export const KLINE_SUBTLE_DOWN = "#7f929d";
+
+export function klineMarketColors(subtle: boolean) {
+  return subtle
+    ? { up: KLINE_SUBTLE_UP, down: KLINE_SUBTLE_DOWN }
+    : { up: KLINE_RED, down: KLINE_GREEN };
+}
 export const KLINE_MA_COLOR = [
   "#fbbf24", "#60a5fa", "#a78bfa", "#34d399",
   "#f472b6", "#22d3ee", "#fb923c", "#e2e8f0",

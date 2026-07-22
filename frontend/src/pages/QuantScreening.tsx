@@ -1413,8 +1413,8 @@ export function QuantScreening() {
                         <td className={cn(
                           "px-3 py-2.5 text-right font-mono",
                           row.change_pct == null ? "text-muted-foreground" :
-                          (row.change_pct as number) > 0 ? "text-danger" :
-                          (row.change_pct as number) < 0 ? "text-success" : "text-muted-foreground",
+                          (row.change_pct as number) > 0 ? "text-market-up" :
+                          (row.change_pct as number) < 0 ? "text-market-down" : "text-muted-foreground",
                         )}>
                           {row.change_pct == null ? "—" : `${(row.change_pct as number) > 0 ? "+" : ""}${(row.change_pct as number).toFixed(2)}%`}
                         </td>

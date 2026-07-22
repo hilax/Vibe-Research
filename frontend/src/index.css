@@ -30,6 +30,8 @@
     /* 语义色（涨跌配色由页面按 A股红涨绿跌自行选用 success/danger） */
     --success: 145 62% 47%;
     --danger: 0 74% 60%;
+    --market-up: 0 74% 60%;
+    --market-down: 145 62% 47%;
     --warning: 38 92% 55%;
     --info: 15 89% 56%;
 
@@ -64,6 +66,8 @@
 
     --success: 145 62% 40%;
     --danger: 0 74% 52%;
+    --market-up: 0 74% 52%;
+    --market-down: 145 62% 40%;
     --warning: 38 92% 45%;
     --info: 15 82% 50%;
 
@@ -75,6 +79,17 @@
     --chart-grid: 214 20% 88%;
     --chart-text: 215 16% 42%;
     --chart-axis: 214 20% 78%;
+  }
+
+  /* 公司使用：涨跌仍可区分，但使用低饱和暖灰 / 冷灰，避免大面积红绿过于醒目。 */
+  .market-subtle {
+    --market-up: 24 12% 62%;
+    --market-down: 205 12% 58%;
+  }
+
+  .light.market-subtle {
+    --market-up: 24 10% 40%;
+    --market-down: 205 10% 44%;
   }
 
   * { @apply border-border; }

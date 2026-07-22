@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 // A 股红涨绿跌（与整个看板一致）。
 const color = (v: number | undefined) =>
-  v == null ? "text-muted-foreground" : v > 0 ? "text-danger" : v < 0 ? "text-success" : "text-muted-foreground";
+  v == null ? "text-muted-foreground" : v > 0 ? "text-market-up" : v < 0 ? "text-market-down" : "text-muted-foreground";
 const pct = (v: number | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v}%`);
 
 export function Watchlist() {

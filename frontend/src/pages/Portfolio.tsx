@@ -8,7 +8,7 @@ import { api, ApiError, type PortfolioData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const REFRESH_MS = 30 * 60 * 1000; // 每半小时自动刷新
-const pnlColor = (v: number) => (v > 0 ? "text-danger" : v < 0 ? "text-success" : "text-muted-foreground");
+const pnlColor = (v: number) => (v > 0 ? "text-market-up" : v < 0 ? "text-market-down" : "text-muted-foreground");
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 // 单价类（现价/成本/清仓价）最多 4 位小数：ETF/基金常见 3-4 位，截断成 2 位会与市值/盈亏对不上账
 const fmtPx = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 4 });

@@ -7,13 +7,13 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { KlineFormulaEditor } from "@/components/kline/KlineFormulaEditor";
 import { api, ApiError, type KlineBar, type Quote, type RpsPoint } from "@/lib/api";
 import { useKlineMainFormula } from "@/hooks/useKlineMainFormula";
+import { useMarketPalette } from "@/hooks/useMarketPalette";
 import {
-  KLINE_RED as RED,
-  KLINE_GREEN as GREEN,
   KLINE_MA_COLOR as MA_COLOR,
   KLINE_RPS_COLOR as RPS_COLOR,
   KLINE_RPS_HOT_LINE as RPS_HOT_LINE,
   KLINE_FREQ,
+  klineMarketColors,
   klineFormatVol as fmtVol,
   tdxDrawIconLabel,
   tdxDrawIconSymbol,
@@ -24,6 +24,8 @@ type Frequency = 3 | 4 | 5 | 6; // 60分钟 / 日 / 周 / 月
 const FREQ_OPTIONS = KLINE_FREQ as unknown as { value: Frequency; label: string }[];
 
 export function StockKline() {
+  const { subtle } = useMarketPalette();
+  const { up: RED, down: GREEN } = klineMarketColors(subtle);
   const { code = "" } = useParams<{ code: string }>();
   const navigate = useNavigate();
 
@@ -157,7 +159,7 @@ export function StockKline() {
       rps250Base, rps250Hot,
       showRps,
     };
-  }, [bars, formula.evaluation, rps]);
+  }, [GREEN, RED, bars, formula.evaluation, rps]);
 
   useEffect(() => {
     const c = chartRef.current;
@@ -381,9 +383,9 @@ export function StockKline() {
   const changeTone = change == null
     ? "text-muted-foreground"
     : change > 0
-      ? "text-danger"
+      ? "text-market-up"
       : change < 0
-        ? "text-success"
+        ? "text-market-down"
         : "text-muted-foreground";
   const changeSign = change != null && change > 0 ? "+" : "";
 
