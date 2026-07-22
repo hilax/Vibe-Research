@@ -133,17 +133,25 @@ def get_sw_industry(code: str) -> str:
                     age_days = (time.time() - _SW_INDUSTRY_PATH.stat().st_mtime) / 86400
                     if age_days <= _SW_INDUSTRY_MAX_AGE_DAYS:
                         try:
-                            with _SW_INDUSTRY_PATH.open() as f:
+                            # 显式 utf-8：Windows 下默认 GBK 会把 JSON 里的中文行业名解析坏
+                            with _SW_INDUSTRY_PATH.open(encoding="utf-8") as f:
                                 payload = json.load(f)
                             _sw_industry_cache = payload.get("map", {})
-                            need_build = False
+                            if not isinstance(_sw_industry_cache, dict):
+                                _sw_industry_cache = {}
+                                need_build = True  # 损坏则重建
+                            else:
+                                need_build = False
                         except Exception:
-                            need_build = False  # 损坏则重建
+                            # 损坏则重建（不能跟前面的成功分支共享 need_build=False）
+                            _sw_industry_cache = None
+                            need_build = True
                 if need_build:
                     try:
                         built = _build_sw_industry_map()
                         _SW_INDUSTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-                        with _SW_INDUSTRY_PATH.open("w") as f:
+                        # 显式 utf-8：Windows 默认 GBK 会把中文行业名编码错
+                        with _SW_INDUSTRY_PATH.open("w", encoding="utf-8") as f:
                             json.dump({"version": time.strftime("%Y-%m-%d"), "map": built}, f, ensure_ascii=False)
                         _sw_industry_cache = built
                     except Exception:

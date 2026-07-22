@@ -12,6 +12,7 @@ import { MyReports } from "@/pages/MyReports";
 import { Notes } from "@/pages/Notes";
 import { Settings } from "@/pages/Settings";
 import { QuantScreening } from "@/pages/QuantScreening";
+import { SectorStrength } from "@/pages/SectorStrength";
 import { StockKline } from "@/pages/StockKline";
 
 export const router = createBrowserRouter([
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "/sectors", element: <Sectors /> },
       { path: "/sectors/:key", element: <SectorDetail /> },
       { path: "/sectors/:key/:tag", element: <SectorTagDetail /> },
+      { path: "/sector-strength", element: <SectorStrength /> },
       { path: "/portfolio", element: <Portfolio /> },
       { path: "/stock-data", element: <StockData /> },
       { path: "/quant-screening", element: <QuantScreening /> },

@@ -29,9 +29,18 @@ import market
 import myreports as mr
 import quant
 import quant_formula
-import tdx_blocks
 import tdx_formula
 import tdx_presets
+import user_sectors
+
+# 通达信 blocknew 加载脚本是可选依赖：未配置（缺 tdx_blocks.py）时相关接口返回 503，
+# 其它功能（量化选股、行情、研报、持仓…）保持正常。
+try:
+    import tdx_blocks  # type: ignore[import-not-found]
+    _HAS_TDX_BLOCKS = True
+except ImportError:
+    tdx_blocks = None
+    _HAS_TDX_BLOCKS = False
 
 app = FastAPI(title="Vibe-Research API", version="0.1.3")
 
@@ -380,12 +389,16 @@ def quant_screen_stream(job_id: str, request: Request):
 @app.get("/api/tdx/blocks")
 def tdx_list_blocks():
     """列出通达信 blocknew 中的所有选股公式及其个股数（不返回具体代码，全表轻量）。"""
+    if not _HAS_TDX_BLOCKS:
+        raise HTTPException(503, "通达信 blocknew 加载脚本未配置（backend/tdx_blocks.py 缺失）")
     return {"data": tdx_blocks.list_blocks()}
 
 
 @app.get("/api/tdx/blocks/{block_id}")
 def tdx_get_block(block_id: str):
     """返回指定板块的所有个股（不含行情）、中文标签和描述。"""
+    if not _HAS_TDX_BLOCKS:
+        raise HTTPException(503, "通达信 blocknew 加载脚本未配置（backend/tdx_blocks.py 缺失）")
     block = tdx_blocks.get_block(block_id)
     if block is None:
         raise HTTPException(404, f"未找到板块: {block_id}")
@@ -395,6 +408,8 @@ def tdx_get_block(block_id: str):
 @app.get("/api/tdx/blocks/{block_id}/quotes")
 def tdx_get_block_quotes(block_id: str):
     """返回板块内个股 + 腾讯实时行情（同 /api/quote 的数据格式）。失败时仍返回 codes。"""
+    if not _HAS_TDX_BLOCKS:
+        raise HTTPException(503, "通达信 blocknew 加载脚本未配置（backend/tdx_blocks.py 缺失）")
     block = tdx_blocks.get_block(block_id)
     if block is None:
         raise HTTPException(404, f"未找到板块: {block_id}")
@@ -414,6 +429,8 @@ def tdx_get_block_stocks(block_id: str):
 
     此端点供「通达信公式页」直接做整表展示，不调取基金/北向数据（TDX 选股信号本来就不含基金数据）。
     """
+    if not _HAS_TDX_BLOCKS:
+        raise HTTPException(503, "通达信 blocknew 加载脚本未配置（backend/tdx_blocks.py 缺失）")
     block = tdx_blocks.get_block(block_id)
     if block is None:
         raise HTTPException(404, f"未找到板块: {block_id}")
@@ -1107,3 +1124,90 @@ def industry(top: int = Query(20, ge=5, le=50)):
         return {"data": data}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"行业排名异常：{e}") from e
+
+
+# ── 用户自维护板块强度（RPS5/10/15/20） ─────────────────────────────────
+# 通达信 88xxxx/881xxx 板块本身没有公开的实时行情 API，要算板块 RPS 必须由用户
+# 给出成分股列表，再用全市场 RPS 快照（已经在量化选股里构建好）取中位数聚合。
+
+class UserSectorUpsertReq(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1, max_length=40)
+    constituents: str | list[str] = Field(default="", max_length=200000)
+
+
+class UserSectorUpdateReq(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    constituents: str | list[str] | None = None
+
+
+@app.get("/api/user-sectors")
+def user_sectors_list():
+    """返回用户已配置的板块列表（含成分股代码）。"""
+    return {"data": user_sectors.list_sectors()}
+
+
+@app.post("/api/user-sectors")
+def user_sectors_add(req: UserSectorUpsertReq):
+    try:
+        sector = user_sectors.add_sector(req.code, req.name, req.constituents)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"data": sector}
+
+
+@app.put("/api/user-sectors/{code}")
+def user_sectors_update(code: str, req: UserSectorUpdateReq):
+    try:
+        sector = user_sectors.update_sector(
+            code,
+            name=req.name,
+            constituents=req.constituents,
+        )
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"data": sector}
+
+
+@app.delete("/api/user-sectors/{code}")
+def user_sectors_delete(code: str):
+    ok = user_sectors.delete_sector(code)
+    if not ok:
+        raise HTTPException(404, f"未找到板块 {code}")
+    return {"data": {"deleted": code}}
+
+
+@app.get("/api/user-sectors/{code}/rps")
+def user_sector_rps(code: str):
+    """单板块 RPS：从全市场 RPS 快照聚合成分股的中位数 RPS5/10/15/20。"""
+    try:
+        snap = quant.rps_snapshot()
+    except quant.QuantDataError as e:
+        raise HTTPException(503, f"RPS 快照不可用：{e}") from e
+    if not snap.get("ready") if isinstance(snap, dict) else False:
+        # rps_snapshot() 内部若走预热会一直阻塞；这里再保险一下
+        pass
+    data = user_sectors.compute_sector_rps(code)
+    if data is None:
+        raise HTTPException(404, f"未找到板块 {code}")
+    return {"data": data}
+
+
+@app.get("/api/user-sectors/rps")
+def user_sectors_all_rps():
+    """一次性计算所有用户板块的 RPS（用于列表页直接渲染表格）。"""
+    try:
+        snap = quant.rps_snapshot()
+    except quant.QuantDataError as e:
+        raise HTTPException(503, f"RPS 快照不可用：{e}") from e
+    return {"data": user_sectors.compute_all_sector_rps()}
+
+
+@app.post("/api/user-sectors/bulk-from-tdx")
+def user_sectors_bulk_from_tdx():
+    """把用户提供的通达信板块代码 → 名称映射批量导入（仅 code+name，成分股留空）。
+    请求体: {\"items\": [{\"code\": \"880544\", \"name\": \"光伏\"}, ...]}"""
+    # 直接读最近一次上传的 raw 数据即可，省一个 schema：复用 GET 列表手动导入
+    raise HTTPException(501, "请使用 /api/user-sectors 单条添加；批量导入可在 UI 内粘贴")

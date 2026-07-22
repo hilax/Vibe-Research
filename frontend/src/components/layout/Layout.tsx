@@ -4,7 +4,7 @@ import {
   Activity, Radar, LayoutGrid, Wallet, Settings, Search, NotebookPen,
   Moon, Sun, ChevronsLeft, ChevronsRight, LineChart,
   Cog, Cpu, Database, Cable, Rocket, FlaskConical, Star, FileText,
-  SlidersHorizontal,
+  SlidersHorizontal, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -17,6 +17,7 @@ const NAV = [
   { to: "/sectors", icon: LayoutGrid, label: "板块中心" },
   { to: "/stock-data", icon: Search, label: "个股数据" },
   { to: "/quant-screening", icon: SlidersHorizontal, label: "量化选股" },
+  { to: "/sector-strength", icon: BarChart3, label: "板块强度" },
   { to: "/watchlist", icon: Star, label: "自选股" },
   { to: "/portfolio", icon: Wallet, label: "我的持仓" },
   { to: "/my-reports", icon: FileText, label: "我的研报" },
