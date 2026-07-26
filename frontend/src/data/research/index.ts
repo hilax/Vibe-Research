@@ -10,5 +10,22 @@ export {
   researchRecordById,
   researchRecords,
   spaceProjects,
+  valuationCounterEvidence,
 } from "./catalog";
+export {
+  specialCardDefinitionByType,
+  specialCardDefinitions,
+} from "./specialCards";
+export {
+  CERTAINTY_DIMENSIONS,
+  CERTAINTY_THRESHOLDS,
+  scoreCertainty,
+} from "./certainty";
+export type {
+  CertaintyDimension,
+  CertaintyInput,
+  CertaintyReason,
+  CertaintyResult,
+  CertaintyScores,
+} from "./certainty";
 export type * from "./types";

@@ -97,7 +97,7 @@ export function TdxFormulaEditor({
 
   return (
     <section className="overflow-hidden rounded-xl border border-border/70 bg-black/15">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-2.5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Code2 className="h-4 w-4 shrink-0 text-primary" />
@@ -121,7 +121,7 @@ export function TdxFormulaEditor({
             type="button"
             onClick={onReset}
             disabled={disabled || !isDirty}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-black/15 px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-black/15 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             恢复默认
@@ -130,7 +130,7 @@ export function TdxFormulaEditor({
             type="button"
             onClick={onValidate}
             disabled={disabled || isValidating || source.trim().length === 0}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-2 text-xs font-semibold text-primary transition-colors hover:bg-primary/25 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md bg-primary/15 px-2.5 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isValidating ? (
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -148,7 +148,7 @@ export function TdxFormulaEditor({
           data-testid="tdx-formula-source"
           aria-label={`${strategyLabel}通达信公式源码`}
           value={source}
-          rows={16}
+          rows={12}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
@@ -156,7 +156,7 @@ export function TdxFormulaEditor({
           onChange={(event) => onSourceChange(event.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="请粘贴通达信条件选股公式，例如：&#10;XG:=C&gt;MA(C,20) AND C&gt;MA(C,200);&#10;XG;"
-          className="block min-h-[24rem] w-full resize-y bg-[#080b10]/80 px-4 py-4 font-mono text-[13px] leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/45 focus:bg-[#080b10] disabled:cursor-not-allowed disabled:opacity-60"
+          className="block min-h-[18rem] w-full resize-y bg-[#080b10]/80 px-4 py-3 font-mono text-[13px] leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/45 focus:bg-[#080b10] disabled:cursor-not-allowed disabled:opacity-60"
         />
         <div className="pointer-events-none absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-muted-foreground">
           {lineCount} 行 · {source.length} 字符

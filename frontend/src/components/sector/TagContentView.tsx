@@ -32,6 +32,7 @@ import {
   ResearchFailureLibrary,
   ResearchSourceIndex,
   UnifiedCertaintyMap,
+  ValuationCounterEvidenceWorkbench,
 } from "@/components/sector/ResearchBlocks";
 
 interface Props {
@@ -358,6 +359,8 @@ function renderBlock(b: ContentBlock, i: number) {
       return <CrossSectorEvidenceGraph key={i} title={b.title} />;
     case "research-sources":
       return <ResearchSourceIndex key={i} title={b.title} sector={b.sector} />;
+    case "valuation-counterevidence":
+      return <ValuationCounterEvidenceWorkbench key={i} title={b.title} sector={b.sector} />;
     case "sector-links":
       return (
         <section key={i} className="rounded-xl border border-primary/25 bg-primary/[0.045] p-4">

@@ -1,4 +1,5 @@
 import type { ResearchSource } from "./types";
+import { extendedResearchSources } from "./extendedSources";
 
 export const RESEARCH_AS_OF = "2026-07-20";
 
@@ -611,6 +612,7 @@ export const researchSources: ResearchSource[] = [
     verification: "single-source",
     note: "星载等领域送样验证与其他相控阵场景批量供货分开记录。",
   },
+  ...extendedResearchSources,
 ];
 
 export const researchSourceById = new Map(researchSources.map((source) => [source.id, source]));

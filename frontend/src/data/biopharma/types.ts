@@ -31,14 +31,22 @@ export interface DrugAsset {
   enrollment: string;
   population: string;
   treatmentLine: string;
+  biomarker?: string;
   comparator: string;
   primaryEndpoints: string;
   secondaryEndpoints: string;
   efficacy: string;
   safety: string;
+  dataMaturity?: string;
+  followUp?: string;
   dataCutoff: string;
   nextCatalyst: string;
   designations: string;
+  filingStatus?: string;
+  approvalStatus?: string;
+  commercializationStatus?: string;
+  salesRevenue?: string;
+  insuranceStatus?: string;
   partner: string;
   bd: {
     upfront: string;

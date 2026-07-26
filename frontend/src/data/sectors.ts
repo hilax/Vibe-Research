@@ -2,6 +2,7 @@ import raw from "./sectors.json";
 import { aiComputingSector } from "./aiComputing";
 import { biopharmaSector } from "./biopharma";
 import { businessSpaceSector } from "./businessSpace";
+import { expandedResearchSectors } from "./expandedSectors";
 import { hbmSector } from "./hbm";
 import { opticalSector } from "./optical";
 import { sectorNodeDetails, type CoreNodeDetail } from "./sectorNodeDetails";
@@ -178,6 +179,7 @@ export type ContentBlock =
   | { type: "research-failures"; title: string; sector?: import("./research").ResearchSectorKey }
   | { type: "cross-sector-graph"; title: string }
   | { type: "research-sources"; title: string; sector?: import("./research").ResearchSectorKey }
+  | { type: "valuation-counterevidence"; title: string; sector?: import("./research").ResearchSectorKey }
   | { type: "sector-links"; title: string; items: { label: string; to: string; description: string }[] }
   | { type: "quote"; text: string; cite?: string }
   | { type: "callout"; tone?: "info" | "warn"; text: string }
@@ -192,6 +194,13 @@ export interface Tag {
   content?: ContentBlock[]; // 当 verified=true 且 content 非空，渲染长内容；否则显示占位
 }
 
+export interface SectorSource {
+  label: string;
+  organization: string;
+  date?: string;
+  url: string;
+}
+
 export interface Sector {
   key: string;
   label: string;
@@ -200,6 +209,7 @@ export interface Sector {
   verified: boolean;
   nodes: string[];
   nodeDetails?: Record<string, CoreNodeDetail>;
+  sources?: SectorSource[];
   tags?: Tag[];
 }
 
@@ -214,7 +224,14 @@ const rawData = raw as SectorsFile;
 // 大型研究板块使用独立、可持续更新的数据集；保留 sectors.json 中的板块顺序，
 // 仅在运行时替换通用索引中的对应条目，避免把研究底稿塞回导航索引。
 const researchSectors = new Map(
-  [aiComputingSector, hbmSector, opticalSector, businessSpaceSector, biopharmaSector].map((sector) => [sector.key, sector]),
+  [
+    aiComputingSector,
+    hbmSector,
+    opticalSector,
+    businessSpaceSector,
+    biopharmaSector,
+    ...expandedResearchSectors,
+  ].map((sector) => [sector.key, sector]),
 );
 
 export const sectorsData: SectorsFile = {

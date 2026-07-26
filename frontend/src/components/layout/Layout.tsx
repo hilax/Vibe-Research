@@ -4,6 +4,7 @@ import {
   Activity, Radar, LayoutGrid, Wallet, Settings, Search, NotebookPen,
   EyeOff, Moon, Palette, Sun, ChevronsLeft, ChevronsRight, LineChart,
   Cog, Cpu, Database, Cable, Rocket, FlaskConical, Star, FileText,
+  Orbit, ShieldCheck,
   SlidersHorizontal, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,14 @@ const SECTOR_LINKS = [
   { to: "/sectors/cpo", icon: Cable, label: "光互联" },
   { to: "/sectors/business-space", icon: Rocket, label: "商业航天" },
   { to: "/sectors/ai-pharma", icon: FlaskConical, label: "生物医药" },
+  { to: "/sectors/semiconductor", icon: Cpu, label: "半导体国产替代" },
+  { to: "/sectors/solid-state-battery", icon: Database, label: "固态电池" },
+  { to: "/sectors/low-altitude", icon: Rocket, label: "低空经济" },
+  { to: "/sectors/smart-driving", icon: Cog, label: "智能驾驶" },
+  { to: "/sectors/innovative-drug", icon: FlaskConical, label: "创新药" },
+  { to: "/sectors/power-grid", icon: Cable, label: "电网与特高压" },
+  { to: "/sectors/defense", icon: ShieldCheck, label: "军工" },
+  { to: "/sectors/fusion", icon: Orbit, label: "可控核聚变" },
 ];
 
 export function Layout() {

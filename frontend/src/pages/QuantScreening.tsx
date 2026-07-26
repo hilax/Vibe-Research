@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
-  AlertTriangle, ChevronDown, ChevronUp, Code2, Database, Eye, Flame,
-  Filter, Layers3, LineChart, LoaderCircle, Pencil, Play, Plus, RefreshCw,
+  AlertTriangle, Check, ChevronDown, ChevronUp, Code2, Database, Eye, Flame,
+  Layers3, LineChart, LoaderCircle, Pencil, Play, Plus, RefreshCw,
   Rocket, Search, SlidersHorizontal, Sparkles, Square, Star,
-  Target, TrendingUp, Wand2, X, Zap,
+  Target, TrendingUp, Wand2, X,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -135,33 +135,30 @@ function describeBuiltin(strategy: string): { category: StrategyCategory; tags: 
   }
 }
 
-const CATEGORY_META: Record<StrategyCategory, { title: string; subtitle: string; icon: ReactNode; accent: string }> = {
+const CATEGORY_META: Record<StrategyCategory, { title: string; subtitle: string; icon: ReactNode }> = {
   blue_diamond: {
     title: "蓝钻公式",
     subtitle: "通达信自定义选股公式",
     icon: <Sparkles className="h-3.5 w-3.5" />,
-    accent: "from-amber-500/25 to-orange-500/10 border-amber-400/40",
   },
   classic: {
     title: "经典策略",
     subtitle: "内置结构化策略",
     icon: <Wand2 className="h-3.5 w-3.5" />,
-    accent: "from-sky-500/20 to-indigo-500/10 border-sky-400/40",
   },
   custom: {
     title: "自定义策略",
     subtitle: "用户新建的策略",
     icon: <Plus className="h-3.5 w-3.5" />,
-    accent: "from-fuchsia-500/20 to-pink-500/10 border-fuchsia-400/40",
   },
 };
 
 const TAG_META: Record<StrategyTag, { label: string; tone: string }> = {
   rps:        { label: "RPS",  tone: "border-primary/30 bg-primary/10 text-primary" },
-  finance:    { label: "财务", tone: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" },
-  capital:    { label: "换手", tone: "border-sky-400/30 bg-sky-400/10 text-sky-300" },
-  high_tight: { label: "突破", tone: "border-amber-400/30 bg-amber-400/10 text-amber-300" },
-  drawdown:   { label: "回撤", tone: "border-rose-400/30 bg-rose-400/10 text-rose-300" },
+  finance:    { label: "财务", tone: "border-success/30 bg-success/10 text-success" },
+  capital:    { label: "换手", tone: "border-info/30 bg-info/10 text-info" },
+  high_tight: { label: "突破", tone: "border-warning/30 bg-warning/10 text-warning" },
+  drawdown:   { label: "回撤", tone: "border-destructive/30 bg-destructive/10 text-destructive" },
 };
 
 const FORMULA_DRAFTS_KEY = "vr-quant-tdx-source-drafts-v1";
@@ -209,16 +206,6 @@ const errorIssues = (reason: unknown): TdxFormulaIssue[] | undefined => {
 const numberText = (value: number | null | undefined, digits = 2) =>
   value == null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
 
-function SectionLabel({ icon, title, desc }: { icon: ReactNode; title: string; desc?: string }) {
-  return (
-    <div className="mb-3 flex items-center gap-2">
-      <span className="text-primary">{icon}</span>
-      <span className="text-sm font-semibold">{title}</span>
-      {desc && <span className="text-xs text-muted-foreground">{desc}</span>}
-    </div>
-  );
-}
-
 function ConditionInput({
   label, value, suffix, min, max, step, onChange,
 }: {
@@ -227,8 +214,8 @@ function ConditionInput({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex overflow-hidden rounded-lg border border-border bg-black/20 focus-within:border-primary/50">
+      <span className="mb-1 block text-[11px] font-medium text-muted-foreground">{label}</span>
+      <div className="flex overflow-hidden rounded-lg border border-border/80 bg-black/20 transition-colors focus-within:border-primary/50">
         <input
           type="number"
           value={value}
@@ -236,9 +223,9 @@ function ConditionInput({
           max={max}
           step={step}
           onChange={(event) => onChange(Number(event.target.value))}
-          className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm font-mono outline-none"
+          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-sm font-mono outline-none"
         />
-        <span className="flex items-center border-l border-border/60 px-3 text-xs text-muted-foreground">
+        <span className="flex items-center border-l border-border/60 px-2.5 text-[11px] text-muted-foreground">
           {suffix}
         </span>
       </div>
@@ -284,8 +271,8 @@ export function QuantScreening() {
 
   // 编辑器折叠
   const [showEditor, setShowEditor] = useState(false);
-  // 基础池条件折叠（默认收起，留出空间让用户先看公式/策略）
-  const [showBasePool, setShowBasePool] = useState(false);
+  // 策略管理是低频动作，默认隐藏搜索、新建和改名/隐藏入口。
+  const [manageStrategies, setManageStrategies] = useState(false);
 
   // 新增策略表单
   const [showAddForm, setShowAddForm] = useState(false);
@@ -625,6 +612,7 @@ export function QuantScreening() {
         setError(reason instanceof ApiError ? reason.message : "筛选失败，请稍后重试");
         if (reason instanceof ApiError && reason.status === 422) {
           setValidation({ status: "invalid", message: reason.message, issues: errorIssues(reason) });
+          setShowEditor(true);
         }
       }
       setProgressPhase(null);
@@ -737,12 +725,12 @@ export function QuantScreening() {
     <div>
       <PageHeader
         title="量化选股"
-        subtitle="基金持仓或北向持仓满足任一条件即可入池，再叠加通达信技术公式二次筛选。"
+        subtitle="先用基金与北向数据构建基础池，再按选定策略完成技术筛选。"
         actions={result && (
           <button onClick={run} disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-muted-foreground hover:text-primary disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-primary disabled:opacity-50"
           >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> 重新筛选
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} /> 重新筛选
           </button>
         )}
       />
@@ -760,18 +748,52 @@ export function QuantScreening() {
         }}
       />
 
-      <GlassCard className="mb-4" glow>
-        {/* ── 选股策略 ── */}
-        <SectionLabel icon={<SlidersHorizontal className="h-4 w-4" />} title="选股策略" />
+      <GlassCard className="mb-4 !p-4 sm:!p-5" glow>
+        {/* ── 选股策略：日常只展示紧凑列表，管理工具按需展开 ── */}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 font-mono text-[10px] font-bold text-primary">
+              1
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold">选择策略</h2>
+              <p className="text-[11px] text-muted-foreground">选择本次要执行的技术筛选逻辑</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setManageStrategies((value) => {
+                const next = !value;
+                if (!next) {
+                  setShowAddForm(false);
+                  setEditingKey(null);
+                  setStrategySearch("");
+                }
+                return next;
+              });
+            }}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
+              manageStrategies
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border/70 text-muted-foreground hover:border-primary/30 hover:text-primary",
+            )}
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            {manageStrategies ? "完成管理" : "管理策略"}
+          </button>
+        </div>
 
         {formulaLoading ? (
           <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> 正在加载策略列表…
           </div>
         ) : (
-          <div className="space-y-3">
-            {/* 搜索框 + 添加策略按钮 */}
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="space-y-2.5">
+            {/* 搜索和新建仅在管理模式出现 */}
+            {manageStrategies && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/50 bg-black/10 p-2">
               <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -787,41 +809,43 @@ export function QuantScreening() {
                   type="button"
                   disabled={loading || formulaLoading}
                   onClick={openAddForm}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition-all hover:border-primary/40 hover:text-primary disabled:opacity-40"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-40"
                 >
-                  <Plus className="h-3.5 w-3.5" /> 添加策略
+                  <Plus className="h-3.5 w-3.5" /> 新建
                 </button>
               )}
             </div>
+            )}
 
-            {/* 按分类分组渲染策略卡片 */}
-            {(Object.keys(strategiesByCategory) as StrategyCategory[]).map((cat) => {
+            {/* 两组紧凑列表并排，避免策略卡片占满首屏 */}
+            <div className="grid gap-2 lg:grid-cols-2">
+              {(Object.keys(strategiesByCategory) as StrategyCategory[]).map((cat) => {
               const list = strategiesByCategory[cat];
               if (list.length === 0) return null;
               const meta = CATEGORY_META[cat];
               return (
-                <div key={cat} className="rounded-xl border border-border/40 bg-black/10 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
+                <div key={cat} className="rounded-xl border border-border/50 bg-black/10 p-2.5">
+                  <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-primary">{meta.icon}</span>
                       <span className="font-semibold text-foreground/90">{meta.title}</span>
-                      <span className="text-muted-foreground">· {meta.subtitle}</span>
+                      <span className="hidden text-muted-foreground sm:inline">· {meta.subtitle}</span>
                     </div>
-                    <span className="rounded-full bg-black/30 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-                      {list.length} 个
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {list.length}
                     </span>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-1">
                     {list.map((item) => {
                       const isActive = item.key === selectedKey;
                       return (
                         <div
                           key={item.key}
                           className={cn(
-                            "group relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-all",
+                            "group flex items-center gap-1 rounded-lg border p-1.5 text-left transition-colors",
                             isActive
-                              ? "border-primary/60 bg-gradient-to-br from-primary/15 to-primary/5 shadow-sm shadow-primary/10"
-                              : "border-border/60 bg-black/20 hover:border-primary/30 hover:bg-black/30",
+                              ? "border-primary/50 bg-primary/10"
+                              : "border-transparent bg-black/15 hover:border-border/80 hover:bg-black/25",
                           )}
                         >
                           <button
@@ -829,61 +853,70 @@ export function QuantScreening() {
                             data-testid={isActive ? "quant-strategy" : undefined}
                             disabled={loading}
                             onClick={() => handleSelectStrategy(item.key)}
-                            className="flex flex-1 flex-col gap-1.5 text-left disabled:cursor-not-allowed"
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-not-allowed"
                           >
-                            <div className="flex items-center justify-between gap-2">
+                            <span className={cn(
+                              "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
+                              isActive ? "bg-primary/20 text-primary" : "bg-muted/60 text-muted-foreground",
+                            )}>
+                              {item.icon}
+                            </span>
+                            <span className="min-w-0 flex-1">
                               <span className={cn(
-                                "flex items-center gap-1.5 text-sm font-semibold",
+                                "block truncate text-xs font-semibold",
                                 isActive ? "text-primary" : "text-foreground/90",
                               )}>
-                                <span className={cn(
-                                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
-                                  isActive ? "bg-primary/20 text-primary" : "bg-muted/60 text-muted-foreground",
-                                )}>
-                                  {item.icon}
-                                </span>
-                                <span className="line-clamp-1">{item.label}</span>
+                                {item.label}
                               </span>
-                              {isActive && <Zap className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                            </div>
-                            <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                              {item.description || <span className="opacity-50">暂无说明</span>}
-                            </p>
+                              {item.tags.length === 0 && (
+                                <span className="block truncate text-[10px] text-muted-foreground">
+                                  基础技术策略
+                                </span>
+                              )}
+                            </span>
                             {item.tags.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
+                              <span className="hidden shrink-0 flex-wrap justify-end gap-1 2xl:flex">
                                 {item.tags.map((tag) => (
                                   <span key={tag} className={cn(
-                                    "rounded-full border px-1.5 py-0.5 text-[9px] font-medium",
+                                    "rounded-full border px-1.5 py-0.5 text-[8px] font-medium",
                                     TAG_META[tag].tone,
                                   )}>
                                     {TAG_META[tag].label}
                                   </span>
                                 ))}
-                              </div>
+                              </span>
+                            )}
+                            {isActive && (
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                                <Check className="h-3 w-3" />
+                              </span>
                             )}
                           </button>
-                          {/* 重命名 / 删除按钮（悬浮显示） */}
-                          <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                            <button
-                              type="button"
-                              aria-label={`重命名策略 ${item.label}`}
-                              onClick={(e) => { e.stopPropagation(); handleEditStrategy(item.key); }}
-                              className="rounded p-0.5 text-muted-foreground hover:text-primary"
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                item.isCustom ? handleDeleteStrategy(item.key) : handleHideBuiltin(item.key);
-                              }}
-                              className="rounded p-0.5 text-muted-foreground hover:text-destructive"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </div>
+                          {manageStrategies && (
+                            <div className="flex shrink-0 gap-0.5">
+                              <button
+                                type="button"
+                                title={`重命名策略 ${item.label}`}
+                                aria-label={`重命名策略 ${item.label}`}
+                                onClick={(e) => { e.stopPropagation(); handleEditStrategy(item.key); }}
+                                className="rounded p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                title={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
+                                aria-label={item.isCustom ? `删除策略 ${item.label}` : `隐藏策略 ${item.label}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  item.isCustom ? handleDeleteStrategy(item.key) : handleHideBuiltin(item.key);
+                                }}
+                                className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -891,6 +924,7 @@ export function QuantScreening() {
                 </div>
               );
             })}
+            </div>
 
             {filteredStrategies.length === 0 && (
               <p className="py-6 text-center text-xs text-muted-foreground">
@@ -900,21 +934,66 @@ export function QuantScreening() {
           </div>
         )}
 
-        {/* 策略说明 */}
+        {/* 当前策略摘要 + 低频源码入口 */}
         {selected && (
-          <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
-            {selected.description || <span className="opacity-50">暂无说明</span>}
-            {selected.isCustom && (
-              <span className="ml-2 opacity-60">· 基础引擎：{selected.baseStrategy}</span>
-            )}
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/10 to-transparent px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-primary">{selected.label}</span>
+                <span className="rounded-full border border-border/70 bg-black/20 px-2 py-0.5 text-[9px] text-muted-foreground">
+                  {selected.isCustom ? "自定义策略" : "内置策略"}
+                </span>
+                {selected.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className={cn(
+                      "rounded-full border px-1.5 py-0.5 text-[8px] font-medium",
+                      TAG_META[tag].tone,
+                    )}
+                  >
+                    {TAG_META[tag].label}
+                  </span>
+                ))}
+                {isDirty && (
+                  <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[9px] text-warning">
+                    公式已修改
+                  </span>
+                )}
+                {validation.status === "invalid" && (
+                  <span className="rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[9px] text-destructive">
+                    公式需修正
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                {selected.description || "暂无策略说明"}
+                {selected.isCustom && <span className="ml-1.5 opacity-60">· 基础引擎 {selected.baseStrategy}</span>}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-expanded={showEditor}
+              aria-controls="quant-formula-editor"
+              onClick={() => setShowEditor((value) => !value)}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
+                showEditor
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border/70 text-muted-foreground hover:border-primary/30 hover:text-primary",
+              )}
+            >
+              <Code2 className="h-3 w-3" />
+              {showEditor ? "收起公式" : "编辑公式"}
+              {showEditor ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </button>
+          </div>
         )}
 
         {/* ── 新增策略表单 ── */}
         {showAddForm && (
-          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
-            <p className="mb-3 text-sm font-semibold">新建自定义策略</p>
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+            <p className="mb-2.5 text-xs font-semibold">新建自定义策略</p>
+            <div className="mb-2.5 grid gap-2.5 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">策略名称 <span className="text-destructive">*</span></span>
                 <input
@@ -925,7 +1004,7 @@ export function QuantScreening() {
                   placeholder="例如：均线金叉策略"
                   onChange={(e) => setNewLabel(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && newLabel.trim() && handleAddStrategy()}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
                 />
               </label>
               <label className="block">
@@ -936,12 +1015,12 @@ export function QuantScreening() {
                   maxLength={60}
                   placeholder="简要描述选股逻辑"
                   onChange={(e) => setNewDesc(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
                 />
               </label>
             </div>
-            <div className="mb-4">
-              <span className="mb-2 block text-xs font-medium text-muted-foreground">基础引擎</span>
+            <div className="mb-3">
+              <span className="mb-1.5 block text-xs font-medium text-muted-foreground">基础引擎</span>
               <div className="flex flex-wrap gap-2">
                 {presets.map((p) => (
                   <button
@@ -949,7 +1028,7 @@ export function QuantScreening() {
                     type="button"
                     onClick={() => setNewBaseStrategy(p.strategy as QuantStrategy)}
                     className={cn(
-                      "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+                      "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
                       newBaseStrategy === p.strategy
                         ? "border-primary/60 bg-primary/15 text-primary shadow-sm shadow-primary/10"
                         : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
@@ -968,7 +1047,7 @@ export function QuantScreening() {
                 type="button"
                 onClick={() => setCopyCurrentSource((v) => !v)}
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-all",
+                  "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors",
                   copyCurrentSource
                     ? "border-primary/40 bg-primary/10 text-primary"
                     : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
@@ -989,7 +1068,7 @@ export function QuantScreening() {
               <button
                 type="button"
                 onClick={() => { setShowAddForm(false); setNewLabel(""); setNewDesc(""); }}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
               >
                 取消
               </button>
@@ -997,7 +1076,7 @@ export function QuantScreening() {
                 type="button"
                 disabled={!newLabel.trim()}
                 onClick={handleAddStrategy}
-                className="rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
+                className="rounded-md bg-primary/15 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
               >
                 保存策略
               </button>
@@ -1007,12 +1086,12 @@ export function QuantScreening() {
 
         {/* ── 编辑策略名称/说明表单 ── */}
         {editingKey !== null && (
-          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
-            <p className="mb-3 text-sm font-semibold">
+          <div className="mt-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+            <p className="mb-2.5 text-xs font-semibold">
               编辑策略：{allStrategies.find((s) => s.key === editingKey)?.isCustom ? "" : "（内置）"}
               {allStrategies.find((s) => s.key === editingKey)?.label}
             </p>
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+            <div className="mb-2.5 grid gap-2.5 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   策略名称 <span className="text-destructive">*</span>
@@ -1024,7 +1103,7 @@ export function QuantScreening() {
                   maxLength={30}
                   onChange={(e) => setEditLabel(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && editLabel.trim() && handleSaveEdit()}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
                 />
               </label>
               <label className="block">
@@ -1035,7 +1114,7 @@ export function QuantScreening() {
                   maxLength={60}
                   placeholder="简要描述选股逻辑"
                   onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-1.5 text-sm outline-none focus:border-primary/50"
                 />
               </label>
             </div>
@@ -1043,7 +1122,7 @@ export function QuantScreening() {
               <button
                 type="button"
                 onClick={() => setEditingKey(null)}
-                className="rounded-lg border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
               >
                 取消
               </button>
@@ -1051,7 +1130,7 @@ export function QuantScreening() {
                 type="button"
                 disabled={!editLabel.trim()}
                 onClick={handleSaveEdit}
-                className="rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
+                className="rounded-md bg-primary/15 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/25 disabled:opacity-40"
               >
                 保存
               </button>
@@ -1060,7 +1139,7 @@ export function QuantScreening() {
         )}
 
         {/* 已隐藏内置策略提示 */}
-        {hiddenBuiltins.length > 0 && (
+        {manageStrategies && hiddenBuiltins.length > 0 && (
           <p className="mt-2.5 text-xs text-muted-foreground">
             已隐藏 {hiddenBuiltins.length} 个内置策略
             <button
@@ -1073,136 +1152,114 @@ export function QuantScreening() {
           </p>
         )}
 
-        <div className="my-5 border-t border-border/40" />
-
-        {/* ── 基础池条件（默认折叠，点标题展开）── */}
-        <button
-          type="button"
-          onClick={() => setShowBasePool((v) => !v)}
-          className={cn(
-            "flex w-full items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm transition-all",
-            showBasePool
-              ? "border-primary/40 bg-primary/5 text-foreground"
-              : "border-border/60 bg-black/15 text-muted-foreground hover:border-primary/30 hover:text-foreground"
-          )}
-        >
-          <span className="flex items-center gap-2">
-            <span className="text-primary"><Filter className="h-4 w-4" /></span>
-            <span className="text-sm font-semibold">基础池条件</span>
-            <span className="text-xs text-muted-foreground">基金或北向满足任一项即可入池</span>
-          </span>
-          {showBasePool
-            ? <ChevronUp className="h-4 w-4 shrink-0 text-primary" />
-            : <ChevronDown className="h-4 w-4 shrink-0" />}
-        </button>
-        {showBasePool && (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <ConditionInput
-              label="基金持股占流通股 ≥"
-              value={fundRatioMin}
-              suffix="%"
-              min={0.1}
-              max={100}
-              step={0.5}
-              onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
-            />
-            <ConditionInput
-              label="北向持股市值 ≥"
-              value={northValueMin}
-              suffix="亿元"
-              min={0}
-              max={100000}
-              step={0.5}
-              onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
-            />
-          </div>
-        )}
-
-        <div className="my-5 border-t border-border/40" />
-
-        {/* ── 公式源码（可折叠）── */}
-        {selected && activeSource && (
-          <>
-            <button
-              type="button"
-              onClick={() => setShowEditor((v) => !v)}
-              className={cn(
-                "flex w-full items-center justify-between rounded-lg border px-4 py-3 text-sm transition-all",
-                showEditor
-                  ? "border-primary/40 bg-primary/5 text-foreground"
-                  : "border-border/60 bg-black/15 text-muted-foreground hover:border-primary/30 hover:text-foreground"
-              )}
-            >
-              <div className="flex items-center gap-2.5">
-                <Code2 className={cn("h-4 w-4 shrink-0", showEditor ? "text-primary" : "")} />
-                <span className="font-medium">通达信公式源码</span>
-                <span className="font-mono text-xs opacity-70">
-                  {activeSource.split(/\r?\n/).length} 行
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+          {/* ── 基础池条件始终可见，避免用户忘记当前阈值 ── */}
+          <section className="rounded-xl border border-border/60 bg-black/10 p-3">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 font-mono text-[10px] font-bold text-primary">
+                  2
                 </span>
-                {isDirty && (
-                  <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
-                    已修改
-                  </span>
-                )}
+                <div>
+                  <h3 className="text-xs font-semibold">设置基础股票池</h3>
+                  <p className="text-[10px] text-muted-foreground">基金或北向任一条件满足即可入池</p>
+                </div>
               </div>
-              {showEditor
-                ? <ChevronUp className="h-4 w-4 shrink-0 text-primary" />
-                : <ChevronDown className="h-4 w-4 shrink-0" />}
-            </button>
+              <span className="rounded-full border border-info/25 bg-info/10 px-2 py-0.5 font-mono text-[9px] font-semibold text-info">
+                OR 任一满足
+              </span>
+            </div>
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <ConditionInput
+                label="基金持股占流通股"
+                value={fundRatioMin}
+                suffix="% 以上"
+                min={0.1}
+                max={100}
+                step={0.5}
+                onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
+              />
+              <ConditionInput
+                label="北向持股市值"
+                value={northValueMin}
+                suffix="亿元以上"
+                min={0}
+                max={100000}
+                step={0.5}
+                onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); _cachedSnapshot = null; }}
+              />
+            </div>
+          </section>
 
-            {showEditor && (
-              <div className="mt-3">
-                <TdxFormulaEditor
-                  source={activeSource}
-                  defaultSource={selected.defaultSource}
-                  strategyLabel={selected.label}
-                  validation={validation}
-                  disabled={loading}
-                  onSourceChange={updateFormulaSource}
-                  onValidate={validateFormula}
-                  onReset={() => {
-                    updateFormulaSource(selected.defaultSource);
-                    setValidation({ status: "idle", message: "已恢复当前策略的默认公式" });
-                  }}
-                />
+          {/* ── 运行摘要与主操作 ── */}
+          <section className="flex flex-col justify-between rounded-xl border border-primary/25 bg-primary/5 p-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 font-mono text-[10px] font-bold text-primary">
+                  3
+                </span>
+                <div>
+                  <h3 className="text-xs font-semibold">运行筛选</h3>
+                  <p className="text-[10px] text-muted-foreground">运行前会自动校验公式</p>
+                </div>
               </div>
-            )}
-
-            <div className="my-5 border-t border-border/40" />
-          </>
-        )}
-
-        {/* ── 条件摘要 + 执行按钮 ── */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <code className="min-w-0 flex-1 break-all rounded-lg bg-black/25 px-3 py-2 text-xs text-primary/80">
-            {`(基金 ≥ ${fundRatioMin}% OR 北向 ≥ ${northValueMin}亿) → `}
-            {activeSource
-              ? `执行 ${selected?.label ?? "通达信公式"}（${activeSource.split(/\r?\n/).length} 行）`
-              : "公式加载中…"}
-          </code>
-          <div className="flex shrink-0 items-center gap-2">
-            {loading && (
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span className="rounded-md border border-border/70 bg-black/20 px-2 py-1 text-muted-foreground">
+                  基金 ≥ <b className="font-mono text-foreground">{fundRatioMin}%</b>
+                </span>
+                <span className="font-semibold text-info">或</span>
+                <span className="rounded-md border border-border/70 bg-black/20 px-2 py-1 text-muted-foreground">
+                  北向 ≥ <b className="font-mono text-foreground">{northValueMin}亿</b>
+                </span>
+                <span className="text-muted-foreground">→</span>
+                <span className="max-w-full truncate rounded-md border border-primary/25 bg-primary/10 px-2 py-1 font-medium text-primary">
+                  {selected?.label ?? "公式加载中"}
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              {loading && (
+                <button
+                  type="button"
+                  onClick={cancelRun}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                >
+                  <Square className="h-3 w-3" /> 取消
+                </button>
+              )}
               <button
-                type="button"
-                onClick={cancelRun}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground transition-all hover:border-destructive/40 hover:text-destructive"
+                data-testid="quant-run"
+                onClick={run}
+                disabled={loading || validating || formulaLoading || !activeSource.trim()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-wait disabled:opacity-60"
               >
-                <Square className="h-3.5 w-3.5" /> 取消
+                {loading ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                {loading
+                  ? (PHASE_LABEL[progressPhase ?? ""] ?? "筛选中")
+                  : validating ? "正在校验…" : "开始筛选"}
               </button>
-            )}
-            <button
-              data-testid="quant-run"
-              onClick={run}
-              disabled={loading || validating || formulaLoading || !activeSource.trim()}
-              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary/15 px-5 py-2.5 text-sm font-semibold text-primary shadow-glow hover:bg-primary/25 disabled:cursor-wait disabled:opacity-60"
-            >
-              {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {loading
-                ? (PHASE_LABEL[progressPhase ?? ""] ?? "执行选股")
-                : validating ? "正在验证公式…" : "验证并开始筛选"}
-            </button>
-          </div>
+            </div>
+          </section>
         </div>
+
+        {/* ── 通达信源码完全隐藏，只有从当前策略摘要显式打开才挂载 ── */}
+        {showEditor && selected && activeSource && (
+          <div id="quant-formula-editor" className="mt-3">
+            <TdxFormulaEditor
+              source={activeSource}
+              defaultSource={selected.defaultSource}
+              strategyLabel={selected.label}
+              validation={validation}
+              disabled={loading}
+              onSourceChange={updateFormulaSource}
+              onValidate={validateFormula}
+              onReset={() => {
+                updateFormulaSource(selected.defaultSource);
+                setValidation({ status: "idle", message: "已恢复当前策略的默认公式" });
+              }}
+            />
+          </div>
+        )}
 
         {/* ── 进度条 + 阶段详情 ── */}
         {loading && (
@@ -1269,59 +1326,80 @@ export function QuantScreening() {
 
       {result && (
         <>
-          <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <GlassCard className="!p-4">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Database className="h-4 w-4" /> 基金条件命中</div>
-              <p className="mt-2 text-2xl font-bold font-mono">{result.fund_candidate_count}</p>
-              <p className="text-[11px] text-muted-foreground">报告期 {result.fund_period}</p>
-            </GlassCard>
-            <GlassCard className="!p-4">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Database className="h-4 w-4" /> 北向条件命中</div>
-              <p className="mt-2 text-2xl font-bold font-mono">{result.north_candidate_count}</p>
-              <p className="text-[11px] text-muted-foreground">港交所持股 {result.north_period}</p>
-            </GlassCard>
-            <GlassCard className="!p-4">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Layers3 className="h-4 w-4" /> OR 基础池</div>
-              <p className="mt-2 text-2xl font-bold font-mono">{result.base_count}</p>
-              <p className="text-[11px] text-muted-foreground">两条件重叠 {result.overlap_count} 只</p>
-            </GlassCard>
-            <GlassCard className="!p-4" glow>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground"><TrendingUp className="h-4 w-4 text-primary" /> {result.strategy_label}</div>
-              <p className="mt-2 text-2xl font-bold font-mono text-primary">{result.matched_count}</p>
-              <p className="text-[11px] text-muted-foreground">K 线 {result.technical_date || "—"} · {result.elapsed_seconds}s</p>
-            </GlassCard>
-          </div>
-
-          {result.rps_meta && (
-            <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">全市场 RPS 快照：</span>
-              {result.rps_meta.trade_date}，沪深 A 股 {result.rps_meta.universe_count} 只；剔除上市未满一年/日 K 不足的 {result.rps_meta.excluded_short_history_count} 只，
-              最终 {result.rps_meta.eligible_count} 只按同一股票池计算 RPS20 / RPS50 / RPS120 / RPS250。
+          <GlassCard className="mb-3 !p-0 overflow-hidden">
+            <div className="grid grid-cols-2 gap-px bg-border/50 sm:grid-cols-4">
+              <div className="bg-card p-3">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Database className="h-3.5 w-3.5" /> 基金命中
+                </div>
+                <p className="mt-1 font-mono text-xl font-bold">{result.fund_candidate_count}</p>
+                <p className="truncate text-[9px] text-muted-foreground">{result.fund_period}</p>
+              </div>
+              <div className="bg-card p-3">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Database className="h-3.5 w-3.5" /> 北向命中
+                </div>
+                <p className="mt-1 font-mono text-xl font-bold">{result.north_candidate_count}</p>
+                <p className="truncate text-[9px] text-muted-foreground">{result.north_period}</p>
+              </div>
+              <div className="bg-card p-3">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Layers3 className="h-3.5 w-3.5" /> 基础池
+                </div>
+                <p className="mt-1 font-mono text-xl font-bold">{result.base_count}</p>
+                <p className="text-[9px] text-muted-foreground">重叠 {result.overlap_count} 只</p>
+              </div>
+              <div className="bg-gradient-to-br from-card to-primary/10 p-3">
+                <div className="flex items-center gap-1.5 text-[11px] text-primary">
+                  <TrendingUp className="h-3.5 w-3.5" /> 技术命中
+                </div>
+                <p className="mt-1 font-mono text-xl font-bold text-primary">{result.matched_count}</p>
+                <p className="truncate text-[9px] text-muted-foreground">{result.strategy_label} · {result.elapsed_seconds}s</p>
+              </div>
             </div>
-          )}
-
-          <div className="mb-4 flex gap-2 rounded-xl border border-warning/25 bg-warning/5 p-3 text-xs text-muted-foreground">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-            <div>
-              <p className="font-medium text-foreground">北向持仓已改为最新季度数据</p>
-              <p className="mt-0.5">{result.north_disclosure_note} 当前使用 {result.north_period}；基金数据使用 {result.fund_period}。</p>
-            </div>
-          </div>
-
-          <GlassCard className="mb-4 !p-0 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-5 py-4">
-              <div>
-                <h2 className="font-semibold">筛选结果</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{result.criteria.tdx_formula}</p>
+            <details className="group border-t border-border/50">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] text-muted-foreground transition-colors hover:bg-black/10 hover:text-foreground">
+                <span className="flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+                  数据口径 · 基金 {result.fund_period} · 北向 {result.north_period}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-2 border-t border-border/40 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                <p>
+                  <span className="font-medium text-foreground">北向持仓：</span>
+                  {result.north_disclosure_note} 当前使用 {result.north_period}；基金数据使用 {result.fund_period}。
+                </p>
+                {result.rps_meta && (
+                  <p>
+                    <span className="font-medium text-foreground">RPS 快照：</span>
+                    {result.rps_meta.trade_date}，沪深 A 股 {result.rps_meta.universe_count} 只；剔除历史不足 {result.rps_meta.excluded_short_history_count} 只，
+                    最终 {result.rps_meta.eligible_count} 只按同一股票池计算 RPS20 / RPS50 / RPS120 / RPS250。
+                  </p>
+                )}
                 {result.criteria.formula_hash && (
-                  <p className="mt-1 font-mono text-[10px] text-primary/80">
+                  <p className="font-mono text-[10px] text-primary/80">
                     公式版本 {result.criteria.formula_hash}
-                    {result.criteria.required_history ? ` · 读取K线 ${result.criteria.required_history} 日` : ""}
+                    {result.criteria.required_history ? ` · 读取 K 线 ${result.criteria.required_history} 日` : ""}
                     {result.criteria.minimum_history ? ` · 最少历史 ${result.criteria.minimum_history} 日` : ""}
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+            </details>
+          </GlassCard>
+
+          <GlassCard className="mb-4 !p-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold">筛选结果</h2>
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 font-mono text-[9px] text-primary">
+                    {rows.length} 只
+                  </span>
+                </div>
+                <p className="mt-0.5 max-w-3xl truncate text-[10px] text-muted-foreground">{result.criteria.tdx_formula}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -1329,21 +1407,21 @@ export function QuantScreening() {
                     handleAddWatch(codes);
                   }}
                   disabled={!rows.some((r) => !watchSet.has(r.code))}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border/40 disabled:bg-black/20 disabled:text-muted-foreground"
+                  className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1.5 text-[11px] text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border/40 disabled:bg-black/20 disabled:text-muted-foreground"
                   title="把当前列表中未加入自选的股票一次性加入"
                 >
                   <Star className="h-3.5 w-3.5" /> 全部加入自选
                 </button>
-                <div className="flex rounded-lg bg-black/20 p-1 text-xs">
+                <div className="flex rounded-lg bg-black/20 p-0.5 text-[11px]">
                   <button
                     onClick={() => { setView("matched"); if (_cachedSnapshot) _cachedSnapshot.view = "matched"; }}
-                    className={cn("rounded-md px-3 py-1.5", view === "matched" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
+                    className={cn("rounded-md px-2.5 py-1.5", view === "matched" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
                   >
                     技术命中 {result.matched_count}
                   </button>
                   <button
                     onClick={() => { setView("base"); if (_cachedSnapshot) _cachedSnapshot.view = "base"; }}
-                    className={cn("rounded-md px-3 py-1.5", view === "base" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
+                    className={cn("rounded-md px-2.5 py-1.5", view === "base" ? "bg-primary/15 text-primary" : "text-muted-foreground")}
                   >
                     基础池 {result.base_count}
                   </button>
@@ -1356,9 +1434,9 @@ export function QuantScreening() {
             ) : (
               <div className="max-h-[620px] overflow-auto">
                 <table className="w-full min-w-[1380px] text-sm">
-                  <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
+                  <thead className="sticky top-0 z-[2] bg-card/95 backdrop-blur">
                     <tr className="border-b border-border/60 text-left text-[11px] text-muted-foreground">
-                      <th className="whitespace-nowrap px-5 py-2.5 font-medium">
+                      <th className="sticky left-0 z-[3] whitespace-nowrap border-r border-border/40 bg-card/95 px-4 py-2.5 font-medium">
                         <button type="button" onClick={() => toggleSort("name")}
                           className={cn("inline-flex items-center gap-1 hover:text-foreground transition-colors", sortKey === "name" && "text-primary")}
                           title="点击按名称排序">
@@ -1401,8 +1479,8 @@ export function QuantScreening() {
                     {sortedRows.map((row: QuantRow) => (
                       <tr key={row.code}
                         onClick={() => navigate(`/stock-kline/${row.code}`)}
-                        className="cursor-pointer border-b border-border/30 hover:bg-muted/20">
-                        <td className="px-5 py-2.5">
+                        className="group cursor-pointer border-b border-border/30 hover:bg-muted/20">
+                        <td className="sticky left-0 z-[1] border-r border-border/30 bg-card/95 px-4 py-2.5 transition-colors group-hover:bg-muted">
                           <Link to={`/stock-kline/${row.code}`}
                             onClick={(e) => e.stopPropagation()}
                             className="block">
@@ -1453,7 +1531,10 @@ export function QuantScreening() {
                           ) : (
                             <button
                               type="button"
-                              onClick={() => handleAddWatch([row.code])}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleAddWatch([row.code]);
+                              }}
                               className="inline-flex items-center gap-1 rounded-md border border-border/70 px-2 py-1 text-[11px] text-muted-foreground transition hover:border-primary/60 hover:text-primary"
                               title={`将 ${row.code} 加入自选股`}
                             >
@@ -1472,9 +1553,17 @@ export function QuantScreening() {
       )}
 
       {!result && !loading && (
-        <GlassCard className="mb-4">
-          <div className="py-10 text-center text-sm text-muted-foreground">
-            设置条件后点击“开始两阶段筛选”。首次运行 RPS 策略需要构建全沪深市场快照，完成后会按交易日缓存。
+        <GlassCard className="mb-4 !p-3">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <SlidersHorizontal className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-foreground">等待开始筛选</p>
+              <p className="mt-0.5 text-[10px]">
+                确认策略和基础池阈值后点击“开始筛选”；RPS 快照会按交易日缓存。
+              </p>
+            </div>
           </div>
         </GlassCard>
       )}
@@ -1500,14 +1589,14 @@ function RpsStatusBadge({
   let detail: string;
 
   if (status.ready) {
-    tone = "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    tone = "border-success/30 bg-success/10 text-success";
     icon = <TrendingUp className="h-3.5 w-3.5" />;
     label = "RPS 快照已就绪";
     detail = status.trade_date
       ? `${status.trade_date} · 选股将秒回`
       : "选股将秒回";
   } else if (status.running) {
-    tone = "border-sky-500/30 bg-sky-500/10 text-sky-300";
+    tone = "border-info/30 bg-info/10 text-info";
     icon = <LoaderCircle className="h-3.5 w-3.5 animate-spin" />;
     label = "RPS 后台预热中…";
     detail = "新交易日首次构建全市场快照，请稍候";
@@ -1525,22 +1614,22 @@ function RpsStatusBadge({
 
   return (
     <div className={cn(
-      "mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs",
+      "mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-[11px]",
       tone,
     )}>
       <div className="flex items-center gap-2">
         {icon}
         <span className="font-medium">{label}</span>
-        <span className="opacity-70">{detail}</span>
+        <span className="hidden opacity-70 sm:inline">{detail}</span>
       </div>
       <button
         type="button"
         onClick={onRefresh}
         disabled={status.running}
-        className="inline-flex items-center gap-1 rounded-md border border-current/30 px-2 py-0.5 text-[11px] opacity-80 transition-opacity hover:opacity-100 disabled:cursor-wait disabled:opacity-40"
+        className="inline-flex items-center gap-1 rounded-md border border-current/30 px-1.5 py-0.5 text-[10px] opacity-80 transition-opacity hover:opacity-100 disabled:cursor-wait disabled:opacity-40"
       >
         <RefreshCw className={cn("h-3 w-3", status.running && "animate-spin")} />
-        {status.last_error ? "重试" : "手动预热"}
+        {status.last_error ? "重试" : "预热"}
       </button>
     </div>
   );

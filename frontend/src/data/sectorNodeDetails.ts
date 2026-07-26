@@ -1,8 +1,9 @@
-export interface CoreNodeDetail {
-  summary: string;
-  role: string;
-  watch: string;
-}
+import { energySectorNodeDetails } from "./sectorNodeDetailsEnergy";
+import { industrySectorNodeDetails } from "./sectorNodeDetailsIndustry";
+import { techSectorNodeDetails } from "./sectorNodeDetailsTech";
+import type { CoreNodeDetail } from "./sectorNodeDetailTypes";
+
+export type { CoreNodeDetail } from "./sectorNodeDetailTypes";
 
 export const sectorNodeDetails: Record<string, Record<string, CoreNodeDetail>> = {
   humanoid: {
@@ -121,4 +122,7 @@ export const sectorNodeDetails: Record<string, Record<string, CoreNodeDetail>> =
       watch: "单柜功率、冷板覆盖、CDU与管路可靠性、漏液检测、冷却液兼容、运维标准、PUE以及实际部署渗透率。",
     },
   },
+  ...techSectorNodeDetails,
+  ...energySectorNodeDetails,
+  ...industrySectorNodeDetails,
 };

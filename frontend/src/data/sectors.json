@@ -1,5 +1,5 @@
 {
-  "_comment": "板块·环节骨架（开源版单一来源）。零具体标的：nodes 只有产业链环节名。verified=true 者环节已核实（来自做透的板块）；false 者为占位，待实时核实补全（禁止靠模型记忆编）。用户可在本地 my-watchlist.json 挂自己的标的，不进仓库。",
+  "_comment": "板块·环节骨架（开源版导航索引）。零具体标的：nodes 只有产业链环节名。verified=true 者已按公开的一手政策、监管、标准或科研机构资料核实，并在 sources 中保留来源；false 条目可能由独立研究数据集在运行时替换，未替换者才是待核实占位（禁止靠模型记忆编）。用户可在本地 my-watchlist.json 挂自己的标的，不进仓库。",
   "indices": {
     "aShare": ["上证指数", "深证成指", "创业板指", "沪深300"],
     "us": ["道琼斯", "纳斯达克", "标普500"]
@@ -667,20 +667,176 @@
     },
     { "key": "hbm", "label": "HBM", "tagline": "高带宽存储——AI 芯片的内存瓶颈", "hot": true, "verified": false, "nodes": [] },
     { "key": "cpo", "label": "光互联", "tagline": "光电共封装（CPO）——突破铜互连的带宽墙", "hot": true, "verified": false, "nodes": [] },
-    { "key": "semiconductor", "label": "半导体国产替代", "tagline": "设备、材料、EDA、制造的自主链条", "hot": true, "verified": false, "nodes": [] },
-    { "key": "solid-state-battery", "label": "固态电池", "tagline": "下一代电池的材料与工艺路线", "hot": true, "verified": false, "nodes": [] },
-    { "key": "low-altitude", "label": "低空经济", "tagline": "eVTOL、空管、基建与运营", "hot": true, "verified": false, "nodes": [] },
-    { "key": "smart-driving", "label": "智能驾驶", "tagline": "感知、算力、线控与整车", "hot": true, "verified": false, "nodes": [] },
-    { "key": "innovative-drug", "label": "创新药", "tagline": "靶点、临床、CXO 与出海", "hot": true, "verified": false, "nodes": [] },
-    { "key": "power-grid", "label": "电网与特高压", "tagline": "输配电设备与新型电力系统", "hot": false, "verified": false, "nodes": [] },
-    { "key": "defense", "label": "军工", "tagline": "航空、航天、船舶与信息化", "hot": false, "verified": false, "nodes": [] },
-    { "key": "fusion", "label": "可控核聚变", "tagline": "磁约束、超导与第一壁材料", "hot": true, "verified": false, "nodes": [] },
+    {
+      "key": "semiconductor",
+      "label": "半导体国产替代",
+      "tagline": "设备、材料、EDA、制造的自主链条",
+      "hot": true,
+      "verified": true,
+      "nodes": ["EDA 与 IP 核", "芯片设计", "半导体材料", "制造设备与核心零部件", "晶圆制造", "封装与异质集成", "芯片测试与可靠性", "整机适配与量产导入"],
+      "sources": [
+        { "label": "《信息产业发展指南》解读：集成电路", "organization": "工业和信息化部", "date": "2017-02-27", "url": "https://www.miit.gov.cn/jgsj/dzs/gzdt/art/2020/art_5e0ca661d9884aee962b27ec75ba3a8d.html" },
+        { "label": "集成电路设计、装备、材料、封装、测试企业条件公告", "organization": "工业和信息化部等四部门", "date": "2021", "url": "https://wap.miit.gov.cn/zwgk/zcwj/wjfb/gg/art/2021/art_3c531aae91bf4558b5ebfa8a7dd6a579.html" },
+        { "label": "“十三五”先进制造技术领域科技创新专项规划", "organization": "科学技术部", "date": "2017", "url": "https://www.miit.gov.cn/ztzl/lszt/tddsjcyfz/zctz/art/2020/art_93d9831d1da84c04ba19e3cf096e831e.html" }
+      ]
+    },
+    {
+      "key": "solid-state-battery",
+      "label": "固态电池",
+      "tagline": "下一代电池的材料与工艺路线",
+      "hot": true,
+      "verified": true,
+      "nodes": ["电池级锂盐与前驱体", "固态电解质", "高载量复合正极", "锂金属与无负极", "界面涂层与改性", "电解质薄层与压制装备", "电芯叠片封装与化成", "安全检测与回收"],
+      "sources": [
+        { "label": "A Review on Solid State Batteries: Life Cycle Perspectives", "organization": "Argonne National Laboratory / DOE", "date": "2025", "url": "https://www.osti.gov/biblio/2466235" },
+        { "label": "Battery Critical Materials Supply Chain Challenges and Opportunities", "organization": "U.S. Department of Energy", "date": "2022", "url": "https://www.energy.gov/sites/default/files/2022-01/Battery%20Critical%20Materials%20Workshop%20Report%20-%20FINAL.pdf" },
+        { "label": "Batteries and Secure Energy Transitions", "organization": "International Energy Agency", "date": "2024", "url": "https://www.iea.org/reports/batteries-and-secure-energy-transitions/executive-summary" }
+      ]
+    },
+    {
+      "key": "low-altitude",
+      "label": "低空经济",
+      "tagline": "eVTOL、空管、基建与运营",
+      "hot": true,
+      "verified": true,
+      "nodes": ["航空材料与核心零部件", "动力与能源系统", "航电与飞行控制", "通用航空器整机", "适航审定与检测维修", "低空通信导航监视", "起降与能源基础设施", "飞行服务与场景运营"],
+      "sources": [
+        { "label": "通用航空装备创新应用实施方案（2024—2030年）", "organization": "工业和信息化部等四部门", "date": "2024", "url": "https://www.miit.gov.cn/zwgk/zcwj/wjfb/tz/art/2024/art_4ce8d09c15ee4fb1aefc3d5dfbbb6584.html" },
+        { "label": "低空飞行服务保障体系建设总体方案", "organization": "中国民用航空局", "date": "2018", "url": "https://www.caac.gov.cn/PHONE/XXGK_17/XXGK/ZCFB/201810/t20181012_192112.html" },
+        { "label": "无人驾驶航空器飞行管理暂行条例", "organization": "国务院、中央军委", "date": "2023", "url": "https://xzfg.moj.gov.cn/mobile/law/detail?LawID=1663" }
+      ]
+    },
+    {
+      "key": "smart-driving",
+      "label": "智能驾驶",
+      "tagline": "感知、算力、线控与整车",
+      "hot": true,
+      "verified": true,
+      "nodes": ["车载感知与融合", "地图与高精定位", "车规芯片与计算平台", "车载基础软件与数据闭环", "决策规划与线控执行", "车路协同与云控平台", "功能安全与网络数据安全", "整车集成与测试准入"],
+      "sources": [
+        { "label": "国家车联网产业标准体系建设指南（智能网联汽车）（2023版）", "organization": "工业和信息化部、国家标准化管理委员会", "date": "2023-07-26", "url": "https://www.miit.gov.cn/jgsj/kjs/jscx/bzgf/art/2023/art_7369b5869a284c0f8641c99657d5e99f.html" },
+        { "label": "智能网联汽车“车路云一体化”应用试点工作通知", "organization": "工业和信息化部等五部门", "date": "2024", "url": "https://www.miit.gov.cn/zwgk/zcwj/wjfb/tz/art/2024/art_b236a25edf9f4a8f9b60dbcda924753b.html" },
+        { "label": "智能网联汽车准入和上路通行试点工作通知", "organization": "工业和信息化部等四部门", "date": "2023", "url": "https://www.miit.gov.cn/jgsj/zbys/wjfb/art/2023/art_4a67648dc58e483bab554f97045a8579.html" }
+      ]
+    },
+    {
+      "key": "innovative-drug",
+      "label": "创新药",
+      "tagline": "靶点、临床、CXO 与出海",
+      "hot": true,
+      "verified": true,
+      "nodes": ["靶点发现与验证", "药物设计与先导优化", "临床前药效与安全性", "药学与工艺开发（CMC）", "临床试验", "注册审评与上市许可", "规模生产与质量体系", "准入支付与上市后管理"],
+      "sources": [
+        { "label": "The Drug Development Process", "organization": "U.S. Food and Drug Administration", "url": "https://www.fda.gov/patients/learn-about-drug-and-device-approvals/drug-development-process" },
+        { "label": "中华人民共和国药品管理法", "organization": "全国人民代表大会常务委员会", "date": "2019", "url": "https://www.nhc.gov.cn/fzs/c100048/201909/cb43418df9f34278ab43c781c7c68eb2.shtml" },
+        { "label": "药品注册管理办法", "organization": "国家药品监督管理局", "date": "2020", "url": "https://english.nmpa.gov.cn/2022-06/30/c_785628_3.htm" }
+      ]
+    },
+    {
+      "key": "power-grid",
+      "label": "电网与特高压",
+      "tagline": "输配电设备与新型电力系统",
+      "hot": false,
+      "verified": true,
+      "nodes": ["电网规划与工程设计", "交流输变电设备", "特高压直流换流", "输电线路与电工材料", "开关保护与无功补偿", "有源配电网与微电网", "调度自动化与通信", "源网荷储协同与灵活调节"],
+      "sources": [
+        { "label": "新型电力系统发展蓝皮书", "organization": "国家能源局", "date": "2023", "url": "https://www.nea.gov.cn/download/xxdlxtfzlpsgk.pdf" },
+        { "label": "加快构建新型电力系统行动方案（2024—2027年）答记者问", "organization": "国家能源局", "date": "2024-08-06", "url": "https://www.nea.gov.cn/2024-08/06/c_1212386607.htm" },
+        { "label": "关于新形势下配电网高质量发展的指导意见", "organization": "国家发展改革委、国家能源局", "date": "2024-02-06", "url": "https://zfxxgk.nea.gov.cn/2024-02/06/c_1310765994.htm" }
+      ]
+    },
+    {
+      "key": "defense",
+      "label": "军工",
+      "tagline": "航空、航天、船舶与信息化",
+      "hot": false,
+      "verified": true,
+      "nodes": ["基础材料与特种工艺", "核心元器件与机电部件", "探测感知系统", "通信导航与指挥信息", "动力与能源系统", "装备平台总体集成", "无人化与智能化系统", "试验鉴定与维修保障"],
+      "sources": [
+        { "label": "新时代的中国国防", "organization": "国务院新闻办公室", "date": "2019", "url": "https://www.mod.gov.cn/gfbw/fgwx/16092823.html" },
+        { "label": "武器装备科研生产许可管理条例", "organization": "国务院、中央军委", "url": "https://xzfg.moj.gov.cn/front/law/detail?LawID=211" },
+        { "label": "军队装备试验鉴定规定发布说明", "organization": "中华人民共和国国防部", "date": "2022", "url": "https://www.mod.gov.cn/gfbw/sy/tt_214026/4904744.html" }
+      ]
+    },
+    {
+      "key": "fusion",
+      "label": "可控核聚变",
+      "tagline": "磁约束、超导与第一壁材料",
+      "hot": true,
+      "verified": true,
+      "nodes": ["氘氚燃料循环", "超导磁体", "低温与真空系统", "真空室与主机结构", "等离子体加热与电流驱动", "第一壁与偏滤器", "增殖包层与热功转换", "诊断控制与远程运维"],
+      "sources": [
+        { "label": "The ITER Machine", "organization": "ITER Organization", "url": "https://www.iter.org/machine" },
+        { "label": "ITER Supporting Systems", "organization": "ITER Organization", "url": "https://www.iter.org/machine/supporting-systems" },
+        { "label": "Fusion Science and Technology Roadmap", "organization": "U.S. Department of Energy", "date": "2025", "url": "https://www.energy.gov/documents/fusion-science-and-technology-roadmap" }
+      ]
+    },
     { "key": "business-space", "label": "商业航天", "tagline": "火箭、卫星制造与卫星互联网", "hot": true, "verified": false, "nodes": [] },
     { "key": "ai-pharma", "label": "生物医药", "tagline": "创新药、AI 制药与生物技术", "hot": true, "verified": false, "nodes": [] },
-    { "key": "resources", "label": "资源卡口", "tagline": "稀土、锗、铟等被卡的关键资源", "hot": false, "verified": false, "nodes": [] },
-    { "key": "ai-application", "label": "AI 应用", "tagline": "大模型落地的应用与 Agent", "hot": true, "verified": false, "nodes": [] },
-    { "key": "ai-hardware", "label": "AI 硬件", "tagline": "端侧、AI 眼镜与消费终端", "hot": true, "verified": false, "nodes": [] },
-    { "key": "energy-storage", "label": "储能", "tagline": "电化学储能与电网侧调峰", "hot": false, "verified": false, "nodes": [] },
-    { "key": "data-element", "label": "数据要素", "tagline": "数据确权、交易与流通基建", "hot": false, "verified": false, "nodes": [] }
+    {
+      "key": "resources",
+      "label": "资源卡口",
+      "tagline": "稀土、锗、铟等被卡的关键资源",
+      "hot": false,
+      "verified": true,
+      "nodes": ["资源勘查与储量评估", "矿山开采", "选矿富集与伴生回收", "冶炼分离", "高纯提炼与金属冶炼", "功能材料与器件中间品", "二次资源综合利用", "流通追溯与战略储备"],
+      "sources": [
+        { "label": "稀土管理条例", "organization": "国务院", "date": "2024", "url": "https://xzfg.moj.gov.cn/front/law/detail?LawID=1726&Query=" },
+        { "label": "Rare Earth Elements", "organization": "International Energy Agency", "url": "https://www.iea.org/reports/rare-earth-elements/executive-summary" },
+        { "label": "Critical Mineral Resources of the United States", "organization": "U.S. Geological Survey", "date": "2017", "url": "https://pubs.usgs.gov/publication/pp1802" }
+      ]
+    },
+    {
+      "key": "ai-application",
+      "label": "AI 应用",
+      "tagline": "大模型落地的应用与 Agent",
+      "hot": true,
+      "verified": true,
+      "nodes": ["场景定义与流程改造", "行业数据与知识服务", "模型服务与适配", "应用开发与智能体编排", "工具接入与系统集成", "行业应用交付", "运维评测与安全治理", "运营反馈与持续迭代"],
+      "sources": [
+        { "label": "人工智能行业应用建设发展参考架构", "organization": "国家信息中心", "date": "2024", "url": "https://www.sic.gov.cn/sic/83/260/1206/2c97b8cb-92e665ef-0193-aa1991e8-1ed2.pdf" },
+        { "label": "国家人工智能产业综合标准化体系建设指南（2024版）", "organization": "工业和信息化部等四部门", "date": "2024-07-02", "url": "https://www.miit.gov.cn/jgsj/kjs/wjfb/art/2024/art_0b6ff6228d0a47cc9519dd76c7a02ef2.html" },
+        { "label": "生成式人工智能服务管理暂行办法", "organization": "国家互联网信息办公室等七部门", "date": "2023-07-13", "url": "https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm" }
+      ]
+    },
+    {
+      "key": "ai-hardware",
+      "label": "AI 硬件",
+      "tagline": "端侧、AI 眼镜与消费终端",
+      "hot": true,
+      "verified": true,
+      "nodes": ["智能传感与多模态采集", "端侧 AI 芯片", "存储与高速连接", "模组与主板集成", "端侧推理软件栈", "电源与热管理", "智能终端整机", "测试评估与生态适配"],
+      "sources": [
+        { "label": "国家人工智能产业综合标准化体系建设指南（2024版）", "organization": "工业和信息化部等四部门", "date": "2024-07-02", "url": "https://www.miit.gov.cn/jgsj/kjs/wjfb/art/2024/art_0b6ff6228d0a47cc9519dd76c7a02ef2.html" },
+        { "label": "人工智能终端智能化分级系列国家标准", "organization": "工业和信息化部", "date": "2026", "url": "https://wap.miit.gov.cn/xwfb/gxdt/sjdt/art/2026/art_9fd39c053e484ba4bec7863849213092.html" },
+        { "label": "MLPerf Tiny 低功耗端侧 AI 基准", "organization": "MLCommons", "date": "2026-07", "url": "https://mlcommons.org/2026/07/mlperf-tiny-v1-4-results/" }
+      ]
+    },
+    {
+      "key": "energy-storage",
+      "label": "储能",
+      "tagline": "电化学储能与电网侧调峰",
+      "hot": false,
+      "verified": true,
+      "nodes": ["储能材料与介质", "电芯与储能单元", "模组与电池簇", "电池管理与状态感知", "储能变流与构网控制", "能量管理与聚合调度", "热管理与消防安全", "系统集成与并网运维"],
+      "sources": [
+        { "label": "新型储能制造业高质量发展行动方案", "organization": "工业和信息化部等八部门", "date": "2025", "url": "https://www.nea.gov.cn/20250218/8b14082a18c2423ba9779882d3791d30/202502188b14082a18c2423ba9779882d3791d30_5271f5a7097ea44e2fa28c45b299d51886.pdf" },
+        { "label": "关于促进新型储能并网和调度运用的通知", "organization": "国家能源局", "date": "2024-04-02", "url": "https://zfxxgk.nea.gov.cn/2024-04/02/c_1310771072.htm" },
+        { "label": "关于加强电化学储能电站安全管理的通知", "organization": "国家能源局", "date": "2022-04-26", "url": "https://zfxxgk.nea.gov.cn/2022-04/26/c_1310603679.htm" }
+      ]
+    },
+    {
+      "key": "data-element",
+      "label": "数据要素",
+      "tagline": "数据确权、交易与流通基建",
+      "hot": false,
+      "verified": true,
+      "nodes": ["数据采集与汇聚", "数据治理与质量加工", "目录登记与权益配置", "授权运营与数据产品开发", "可信流通基础设施", "交易撮合与定价结算", "数据交付与行业应用", "安全合规与审计"],
+      "sources": [
+        { "label": "国家数据基础设施建设指引", "organization": "国家发展改革委、国家数据局、工业和信息化部", "date": "2025-01-06", "url": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/202501/P020250106319424108511.pdf" },
+        { "label": "建立数据要素流通全流程合规与监管体系", "organization": "国家发展改革委", "date": "2022-12-20", "url": "https://www.ndrc.gov.cn/xxgk/jd/jd/202212/t20221219_1343668.html" },
+        { "label": "培育流通交易服务生态，充分释放数据要素价值", "organization": "国家发展改革委", "date": "2022-12-20", "url": "https://www.ndrc.gov.cn/xxgk/jd/jd/202212/t20221220_1343705.html" }
+      ]
+    }
   ]
 }

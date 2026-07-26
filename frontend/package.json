@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:research": "node --test tests/research/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

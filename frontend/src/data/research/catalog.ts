@@ -9,6 +9,10 @@ import type {
   ResearchRecord,
   SpaceProject,
 } from "./types";
+import {
+  extendedCrossSectorLinks,
+  valuationCounterEvidence,
+} from "./extendedCatalog";
 import { researchSourceById } from "./sources";
 
 const AS_OF = "2026-07-20";
@@ -668,6 +672,9 @@ export const crossSectorLinks: CrossSectorLink[] = [
   { id: "link-ai-optics", fromId: "nvidia-gb300-nvl72", toId: "broadcom-th6-davisson", relation: "connects", evidence: "机架scale-out需要以太网/IB网络；具体项目是否采用TH6 Davisson需客户确认。", sourceIds: ["nvidia-gb300-nvl72", "broadcom-th6-cpo-2025"] },
   { id: "link-amd-samsung", fromId: "amd-mi350-rack", toId: "samsung-hbm4-12h", relation: "uses", evidence: "双方披露下一代MI455X HBM4合作；MI350使用HBM3E，不能跨代混写。", sourceIds: ["samsung-hbm4-amd-2026", "amd-ai-2025"] },
   { id: "link-space-ground", fromId: "china-leo-group18", toId: "haige", relation: "connects", evidence: "海格披露参与国家卫星互联网工程及终端/芯片测试；具体18组项目份额未公开。", sourceIds: ["miit-leo18-2026", "haige-2025-ar"] },
+  ...extendedCrossSectorLinks,
 ];
 
 export const researchRecordById = new Map(researchRecords.map((record) => [record.id, record]));
+
+export { valuationCounterEvidence };

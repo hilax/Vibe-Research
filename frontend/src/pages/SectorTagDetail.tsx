@@ -6,10 +6,25 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import { sectorTagIcons, sectorTagFallbackIcon } from "@/components/sector/iconMap";
 import { TagContentView } from "@/components/sector/TagContentView";
 import { BIOPHARMA_AS_OF } from "@/data/biopharma";
+import { EXPANDED_RESEARCH_AS_OF } from "@/data/expandedSectors";
 import { RESEARCH_AS_OF } from "@/data/research";
 import { sectorsData } from "@/data/sectors";
 
-const RESEARCH_SECTOR_KEYS = new Set(["ai-computing", "hbm", "cpo", "business-space"]);
+const LEGACY_RESEARCH_SECTOR_KEYS = new Set(["ai-computing", "hbm", "cpo", "business-space"]);
+const EXPANDED_RESEARCH_SECTOR_KEYS = new Set([
+  "semiconductor",
+  "solid-state-battery",
+  "low-altitude",
+  "smart-driving",
+  "innovative-drug",
+  "power-grid",
+  "defense",
+  "fusion",
+]);
+const RESEARCH_SECTOR_KEYS = new Set([
+  ...LEGACY_RESEARCH_SECTOR_KEYS,
+  ...EXPANDED_RESEARCH_SECTOR_KEYS,
+]);
 
 // 针对性建议放在页面顶部就近维护，避免通用 AI 入口失去板块上下文。
 const SUGGESTIONS_BY_TAG: Record<string, string[]> = {
@@ -180,7 +195,7 @@ export function SectorTagDetail() {
         </p>
       ) : RESEARCH_SECTOR_KEYS.has(sector.key) ? (
         <p className="mb-5 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-          研究底稿与结构化卡片统一截至 {RESEARCH_AS_OF}；事实、公司口径、机构预测和系统情景分开展示，送样不等于认证，扩产不等于收入，缺少可靠公开数据的字段保持空白或标记“待验证”。
+          研究底稿与结构化卡片统一截至 {EXPANDED_RESEARCH_SECTOR_KEYS.has(sector.key) ? EXPANDED_RESEARCH_AS_OF : RESEARCH_AS_OF}；事实、公司口径、机构预测和系统情景分开展示，送样不等于认证，扩产不等于收入，缺少可靠公开数据的字段保持空白或标记“待验证”。
         </p>
       ) : null}
 
