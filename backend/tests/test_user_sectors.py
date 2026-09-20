@@ -85,6 +85,55 @@ def test_sector_rps_uses_each_tdx_board_daily_series(isolated_store, monkeypatch
     assert rows["880544"]["return20_pct"] > rows["880301"]["return20_pct"]
 
 
+def test_sector_rps_quantizes_tdx_0_1000_rank_before_dividing_by_10():
+    rows = [
+        {"code": str(index), "returns": {10: float(index)}}
+        for index in range(8)
+    ]
+
+    ranks = user_sectors._percentile_ranks(rows, 10)
+
+    assert ranks["0"] == 0.0
+    assert ranks["1"] == 14.3
+    assert ranks["6"] == 85.7
+    assert ranks["7"] == 100.0
+
+
+def test_sector_etf_uses_tdx_exact_qfq_before_ranking(isolated_store, monkeypatch):
+    user_sectors.add_sector("513090", "香港证券ETF")
+    series = {
+        "880301": _bars(1.0),
+        "880544": _bars(2.0),
+        "880952": _bars(-0.5),
+        "513090": _bars(0.0),
+    }
+    action_date = series["513090"][-5]["trade_date"]
+    monkeypatch.setattr(user_sectors, "_fetch_tdx_daily_bars", lambda code, offset=32: series[code])
+    monkeypatch.setattr(
+        user_sectors,
+        "_fetch_tdx_xdxr",
+        lambda code: [{
+            "year": int(action_date[:4]),
+            "month": int(action_date[5:7]),
+            "day": int(action_date[8:10]),
+            "category": 1,
+            "fenhong": 100,
+            "peigu": 0,
+            "peigujia": 0,
+            "songzhuangu": 0,
+        }],
+    )
+
+    snapshot = user_sectors.compute_all_sector_rps(force_refresh=True)
+    row = next(item for item in snapshot["rows"] if item["code"] == "513090")
+
+    assert snapshot["normalization_scale"] == 1000
+    assert snapshot["display_divisor"] == 10
+    assert snapshot["adjustment"] == "exact_qfq"
+    assert row["return5_pct"] == pytest.approx(11.111, abs=0.001)
+    assert row["rps5"] == 100.0
+
+
 def test_short_history_and_stale_board_are_excluded_per_period(isolated_store, monkeypatch):
     series = {
         "880301": _bars(1.0),

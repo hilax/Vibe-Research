@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import astock
+import bars_cache
 import quant_formula
 import tdx_formula
 import tdx_presets
@@ -607,10 +608,16 @@ def _hs_a_universe() -> list[dict]:
 
 
 def _latest_tdx_date() -> str:
+    key = ("latest-tdx-date",)
+    cached = _cache_get(key, 60)
+    if cached:
+        return cached
     frame = astock._mootdx_client().bars(symbol="600519", frequency=4, offset=2)
     if frame is None or frame.empty:
         raise QuantDataError("通达信未返回基准股票日 K，无法确定 RPS 日期")
-    return str(frame.iloc[-1].get("datetime") or "")[:10]
+    date_str = str(frame.iloc[-1].get("datetime") or "")[:10]
+    _cache_put(key, date_str)
+    return date_str
 
 
 def _exact_qfq_closes(
@@ -618,46 +625,8 @@ def _exact_qfq_closes(
     raw_closes: list[float],
     actions: list[dict],
 ) -> list[float]:
-    """按通达信除权除息记录计算精确前复权收盘价。
-
-    通达信 category=1 的字段均以每 10 股为单位。除权日之前的价格依次按
-    ``(价格*10-分红+配股数*配股价)/(10+配股数+送转数)`` 调整。
-    """
-    adjusted = list(raw_closes)
-    if not adjusted or not actions:
-        return adjusted
-    normalized_dates = [str(value or "")[:10] for value in trade_dates]
-    last_trade_date = normalized_dates[-1]
-    valid_actions: list[tuple[str, float, float, float, float]] = []
-    for row in actions:
-        if int(_finite(row.get("category")) or 0) != 1:
-            continue
-        try:
-            action_date = (
-                f"{int(row.get('year')):04d}-{int(row.get('month')):02d}-"
-                f"{int(row.get('day')):02d}"
-            )
-        except (TypeError, ValueError):
-            continue
-        if action_date > last_trade_date:
-            continue
-        fenhong = float(_finite(row.get("fenhong")) or 0)
-        peigu = float(_finite(row.get("peigu")) or 0)
-        peigujia = float(_finite(row.get("peigujia")) or 0)
-        songzhuangu = float(_finite(row.get("songzhuangu")) or 0)
-        denominator = 10 + peigu + songzhuangu
-        if denominator > 0:
-            valid_actions.append((action_date, fenhong, peigu, peigujia, denominator))
-
-    # 必须按除权日从早到晚应用；现金分红使复权变换并非简单的乘法。
-    for action_date, fenhong, peigu, peigujia, denominator in sorted(valid_actions):
-        for index, trade_date in enumerate(normalized_dates):
-            if trade_date >= action_date:
-                break
-            adjusted[index] = (
-                adjusted[index] * 10 - fenhong + peigu * peigujia
-            ) / denominator
-    return adjusted
+    """兼容旧调用点；精确前复权统一复用 A 股数据层实现。"""
+    return astock.exact_qfq_closes(trade_dates, raw_closes, actions)
 
 
 def _xdxr_actions(code: str) -> list[dict]:
@@ -671,20 +640,36 @@ def _xdxr_actions(code: str) -> list[dict]:
     return frame.to_dict("records")
 
 
-def _rps_history(stock: dict) -> dict | None:
+def _rps_history(stock: dict, target_date: str | None = None) -> dict | None:
     code = stock["code"]
     try:
-        frame = _thread_client().bars(
-            symbol=code,
-            frequency=4,
-            offset=250 + _RPS_HISTORY_DAYS,
-        )
-        if frame is None or frame.empty or len(frame) < 251:
-            return None
-        raw_closes = [_finite(value) for value in frame["close"].tolist()]
+        required_bars = 250 + _RPS_HISTORY_DAYS
+        cached_bars = bars_cache.get_daily_bars(code, min_bars=required_bars, target_date=target_date)
+        bars_records: list[dict]
+        latest_date: str
+        if cached_bars is not None and len(cached_bars) >= 251:
+            bars_records = cached_bars
+            latest_date = str(bars_records[-1].get("datetime") or bars_records[-1].get("date") or "")[:10]
+            raw_closes = [_finite(b.get("close")) for b in bars_records]
+            trade_dates = [str(b.get("datetime") or b.get("date") or "")[:10] for b in bars_records]
+        else:
+            frame = _thread_client().bars(
+                symbol=code,
+                frequency=4,
+                offset=required_bars,
+            )
+            if frame is None or frame.empty or len(frame) < 251:
+                return None
+            raw_closes = [_finite(value) for value in frame["close"].tolist()]
+            trade_dates = [str(value or "")[:10] for value in frame["datetime"].tolist()]
+            latest_date = str(frame.iloc[-1].get("datetime") or "")[:10]
+            bars_records = frame.to_dict("records")
+            for r in bars_records:
+                if "volume" not in r and "vol" in r:
+                    r["volume"] = r["vol"]
+
         if any(value is None or value <= 0 for value in raw_closes):
             return None
-        trade_dates = [str(value or "")[:10] for value in frame["datetime"].tolist()]
         closes = _exact_qfq_closes(
             trade_dates,
             [float(value) for value in raw_closes],
@@ -706,9 +691,10 @@ def _rps_history(stock: dict) -> dict | None:
         return {
             "code": code,
             "name": stock["name"],
-            "trade_date": str(frame.iloc[-1].get("datetime") or "")[:10],
+            "trade_date": latest_date,
             "returns": returns,
             "points": points,
+            "bars": bars_records,
         }
     except Exception:  # noqa: BLE001 — 单只失败不影响全市场快照
         _reset_thread_client()
@@ -761,16 +747,31 @@ def rps_snapshot() -> dict:
         pass
 
     universe = _hs_a_universe()
+    # 批量预加载日 K 缓存
+    universe_codes = [s["code"] for s in universe]
+    bars_cache.prefetch_daily_bars(universe_codes, min_bars=250 + _RPS_HISTORY_DAYS, target_date=trade_date)
+
     histories: list[dict] = []
     workers = max(2, min(12, int(os.environ.get("VR_RPS_WORKERS", "8"))))
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_rps_history, stock) for stock in universe]
+        futures = [executor.submit(_rps_history, stock, trade_date) for stock in universe]
         for future in as_completed(futures):
             item = future.result()
             if item:
                 histories.append(item)
     if len(histories) < 1000:
         raise QuantDataError(f"RPS 有效样本过少（{len(histories)}），通达信数据可能不完整")
+
+    # 反哺日 K 缓存：批量将全市场日 K 持久化到本地 SQLite 缓存，供后续选股零等待直接复用
+    try:
+        bars_items = [(item["code"], item["bars"]) for item in histories if item.get("bars")]
+        if bars_items:
+            bars_cache.put_daily_bars_batch(bars_items, target_date=trade_date)
+    except Exception:  # noqa: BLE001
+        pass
+    # 释放内存中的 bars 对象，保持内存轻量
+    for item in histories:
+        item.pop("bars", None)
 
     rank_maps = {
         period: _percentile_ranks(histories, period)
@@ -1118,12 +1119,37 @@ def _batch_quotes(codes: list[str]) -> dict[str, dict]:
 
 
 def _daily_bar_records(code: str, offset: int) -> list[dict]:
+    # 1. 优先查本地日 K 缓存
     try:
-        frame = _thread_client().bars(symbol=code, frequency=4, offset=offset)
+        target_date = _latest_tdx_date()
+    except Exception:  # noqa: BLE001
+        target_date = None
+    cached = bars_cache.get_daily_bars(code, min_bars=offset, target_date=target_date)
+    if cached is not None:
+        return cached
+
+    # 2. 缓存未命中，从通达信拉取并持久化
+    # 单次拉取 max(offset, 800) 根，保证一次网络请求即可充满完整历史
+    fetch_offset = max(offset, 800)
+    try:
+        frame = _thread_client().bars(symbol=code, frequency=4, offset=fetch_offset)
     except Exception:  # noqa: BLE001 — 线程连接失效时重建一次
         _reset_thread_client()
-        frame = _thread_client().bars(symbol=code, frequency=4, offset=offset)
-    return frame.to_dict("records") if frame is not None and not frame.empty else []
+        frame = _thread_client().bars(symbol=code, frequency=4, offset=fetch_offset)
+    if frame is None or frame.empty:
+        return []
+
+    records = frame.to_dict("records")
+    for r in records:
+        if "volume" not in r and "vol" in r:
+            r["volume"] = r["vol"]
+
+    try:
+        bars_cache.put_daily_bars(code, records, target_date=target_date)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return records
 
 
 def _financial_growth(code: str) -> dict:
@@ -1213,6 +1239,13 @@ def _run_screen_named_signals(
             base_rows.append(row)
             continue
         prepared.append((row, rps))
+
+    try:
+        target_date = _latest_tdx_date()
+    except Exception:  # noqa: BLE001
+        target_date = None
+    codes = [row["code"] for row, _ in prepared]
+    bars_cache.prefetch_daily_bars(codes, min_bars=kline_days, target_date=target_date)
 
     workers = max(2, min(12, int(os.environ.get("VR_SCREEN_WORKERS", "8"))))
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1584,7 +1617,21 @@ def _run_screen_tdx(
     workers = max(2, min(12, int(os.environ.get("VR_SCREEN_WORKERS", "8"))))
     total_bars = len(prepared)
     done_bars = 0
-    _emit("bars", 0, total_bars, f"开始下载 {total_bars} 只个股的日 K…")
+
+    try:
+        target_date = _latest_tdx_date()
+    except Exception:  # noqa: BLE001
+        target_date = None
+    codes = [row["code"] for row, _ in prepared]
+    cache_hits = bars_cache.prefetch_daily_bars(codes, min_bars=fetch_history, target_date=target_date)
+
+    if cache_hits == total_bars and total_bars > 0:
+        _emit("bars", 0, total_bars, f"日 K 全部命中本地缓存（{total_bars}/{total_bars}）…")
+    elif cache_hits > 0:
+        _emit("bars", 0, total_bars, f"开始处理 {total_bars} 只个股日 K（{cache_hits} 只已命中本地缓存）…")
+    else:
+        _emit("bars", 0, total_bars, f"开始下载 {total_bars} 只个股的日 K…")
+
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(_daily_bar_records, row["code"], fetch_history): (row, rps)

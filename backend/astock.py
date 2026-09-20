@@ -415,6 +415,62 @@ def kline(
     return [records_by_time[key] for key in sorted(records_by_time)]
 
 
+def exact_qfq_closes(
+    trade_dates: list[str],
+    raw_closes: list[float],
+    actions: list[dict],
+) -> list[float]:
+    """按通达信除权除息记录计算精确前复权收盘价。
+
+    通达信 category=1 的字段均以每 10 股为单位。除权日之前的价格依次按
+    ``(价格*10-分红+配股数*配股价)/(10+配股数+送转数)`` 调整。
+    """
+    adjusted = list(raw_closes)
+    if not adjusted or not actions:
+        return adjusted
+
+    def finite_number(value) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    normalized_dates = [str(value or "")[:10] for value in trade_dates]
+    last_trade_date = normalized_dates[-1]
+    valid_actions: list[tuple[str, float, float, float, float]] = []
+    for row in actions:
+        category = finite_number(row.get("category"))
+        if int(category or 0) != 1:
+            continue
+        try:
+            action_date = (
+                f"{int(row.get('year')):04d}-{int(row.get('month')):02d}-"
+                f"{int(row.get('day')):02d}"
+            )
+        except (TypeError, ValueError):
+            continue
+        if action_date > last_trade_date:
+            continue
+        fenhong = finite_number(row.get("fenhong")) or 0
+        peigu = finite_number(row.get("peigu")) or 0
+        peigujia = finite_number(row.get("peigujia")) or 0
+        songzhuangu = finite_number(row.get("songzhuangu")) or 0
+        denominator = 10 + peigu + songzhuangu
+        if denominator > 0:
+            valid_actions.append((action_date, fenhong, peigu, peigujia, denominator))
+
+    # 必须按除权日从早到晚应用；现金分红使复权变换并非简单的乘法。
+    for action_date, fenhong, peigu, peigujia, denominator in sorted(valid_actions):
+        for index, trade_date in enumerate(normalized_dates):
+            if trade_date >= action_date:
+                break
+            adjusted[index] = (
+                adjusted[index] * 10 - fenhong + peigu * peigujia
+            ) / denominator
+    return adjusted
+
+
 def finance(code: str) -> dict:
     """季报财务快照（37 字段）。"""
     client = _mootdx_client()

@@ -141,18 +141,41 @@ export function DailyReview() {
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {indices.length === 0
           ? [1, 2, 3, 4].map((i) => (
-              <GlassCard key={i} className="p-3">
+              <GlassCard key={i} className="p-3.5">
                 <p className="text-xs text-muted-foreground">{idxErr ? "行情未接通" : "加载中…"}</p>
                 <p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p>
               </GlassCard>
             ))
-          : indices.map((i) => (
-              <GlassCard key={i.name} className="p-3">
-                <p className="truncate text-xs text-muted-foreground">{i.name}</p>
-                <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(i.change_pct))}>{i.price}</p>
-                <p className={cn("text-xs", pctColor(i.change_pct))}>{i.change_pct > 0 ? "+" : ""}{i.change_pct}%</p>
-              </GlassCard>
-            ))}
+          : indices.map((i) => {
+              const isUp = i.change_pct > 0;
+              const isDown = i.change_pct < 0;
+              return (
+                <GlassCard
+                  key={i.name}
+                  className={cn(
+                    "!p-3.5 relative overflow-hidden transition-all hover:border-primary/40",
+                    isUp ? "border-l-2 border-l-market-up" : isDown ? "border-l-2 border-l-market-down" : "border-l-2 border-l-muted-foreground"
+                  )}
+                >
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground/90 truncate">{i.name}</span>
+                    <span className={cn("font-mono font-num font-semibold text-xs", pctColor(i.change_pct))}>
+                      {isUp && "+"}
+                      {i.change_pct.toFixed(2)}%
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between">
+                    <span className={cn("font-mono font-num text-xl font-bold tracking-tight", pctColor(i.change_pct))}>
+                      {i.price.toFixed(2)}
+                    </span>
+                    <span className={cn("font-mono font-num text-xs", pctColor(i.change_pct))}>
+                      {isUp && "+"}
+                      {i.change_amt?.toFixed(2) ?? ""}
+                    </span>
+                  </div>
+                </GlassCard>
+              );
+            })}
       </div>
 
       {/* 1b. 全球市场（隔夜外围脸色：A 股常看美股 / 港股） */}
@@ -271,16 +294,48 @@ export function DailyReview() {
               ].map((m) => (
                 <div key={m.k} className="rounded-lg bg-muted/25 p-4">
                   <p className="text-xs text-muted-foreground">{m.k}</p>
-                  <p className="mt-1 text-2xl font-bold text-primary">{m.v}</p>
+                  <p className="mt-1 text-2xl font-bold text-primary font-mono">{m.v}</p>
                   <p className="mt-1 text-[11px] text-muted-foreground/60">{m.hint}</p>
                 </div>
               ))}
             </div>
+
+            {/* 涨跌分布比例可视化条 */}
+            {sentiment && (sentiment.up + sentiment.down + sentiment.flat > 0) && (
+              <div className="mt-3 rounded-lg bg-surface-2/40 border border-border/40 p-3">
+                <div className="mb-2 flex items-center justify-between text-xs font-mono font-num">
+                  <span className="text-market-up font-semibold">
+                    上涨 {sentiment.up} ({((sentiment.up / (sentiment.up + sentiment.down + sentiment.flat)) * 100).toFixed(1)}%)
+                  </span>
+                  <span className="text-muted-foreground">
+                    平盘 {sentiment.flat}
+                  </span>
+                  <span className="text-market-down font-semibold">
+                    下跌 {sentiment.down} ({((sentiment.down / (sentiment.up + sentiment.down + sentiment.flat)) * 100).toFixed(1)}%)
+                  </span>
+                </div>
+                <div className="h-2 w-full flex overflow-hidden rounded-full bg-border/40">
+                  <div
+                    className="bg-market-up transition-all duration-500"
+                    style={{ width: `${(sentiment.up / (sentiment.up + sentiment.down + sentiment.flat)) * 100}%` }}
+                  />
+                  <div
+                    className="bg-muted-foreground/30 transition-all duration-500"
+                    style={{ width: `${(sentiment.flat / (sentiment.up + sentiment.down + sentiment.flat)) * 100}%` }}
+                  />
+                  <div
+                    className="bg-market-down transition-all duration-500"
+                    style={{ width: `${(sentiment.down / (sentiment.up + sentiment.down + sentiment.flat)) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="mt-3 grid grid-cols-4 gap-2">
               {sentCells.map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2 text-center">
                   <p className="truncate text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-market-up" : "text-market-down")}>{c.v}</p>
+                  <p className={cn("mt-0.5 font-mono font-num text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-market-up" : "text-market-down")}>{c.v}</p>
                 </div>
               ))}
             </div>

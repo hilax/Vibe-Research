@@ -6,13 +6,16 @@ import {
   ArrowUpDown,
   BarChart3,
   Database,
+  Download,
   Edit3,
+  Flame,
   LoaderCircle,
   Plus,
   RefreshCw,
   Save,
   Search,
   Trash2,
+  TrendingUp,
   X,
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -27,7 +30,8 @@ import { cn } from "@/lib/utils";
 
 type Period = 5 | 10 | 15 | 20;
 type PeriodKey = "rps5" | "rps10" | "rps15" | "rps20";
-type SortKey = "code" | "return20_pct" | PeriodKey | "latest_close";
+type ReturnKey = "return5_pct" | "return10_pct" | "return15_pct" | "return20_pct";
+type SortKey = "code" | ReturnKey | PeriodKey | "latest_close";
 type SortDirection = "asc" | "desc";
 
 const PERIODS: Period[] = [5, 10, 15, 20];
@@ -38,11 +42,11 @@ function rpsKey(period: Period): PeriodKey {
 }
 
 function rpsTone(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "text-muted-foreground/50";
-  if (value >= 95) return "font-bold text-market-up";
-  if (value >= 90) return "font-semibold text-market-up/90";
-  if (value >= 80) return "text-market-up/75";
-  return "text-foreground/75";
+  if (value == null || !Number.isFinite(value)) return "text-muted-foreground/40";
+  if (value >= 95) return "font-semibold text-market-up";
+  if (value >= 90) return "font-medium text-market-up/80";
+  if (value >= 80) return "text-foreground/80";
+  return "text-muted-foreground";
 }
 
 function returnTone(value: number | null | undefined): string {
@@ -82,6 +86,7 @@ function emptyRow(source: SectorSource): SectorStrengthRow {
 export function SectorStrength() {
   const [sources, setSources] = useState<SectorSource[]>([]);
   const [snapshot, setSnapshot] = useState<SectorStrengthSnapshot | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>(20);
   const [sortKey, setSortKey] = useState<SortKey>("rps20");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [search, setSearch] = useState("");
@@ -184,6 +189,11 @@ export function SectorStrength() {
   }, [search, showUnavailable, sortDirection, sortKey]);
 
   const changeSort = (nextKey: SortKey) => {
+    if (nextKey === "rps5" || nextKey === "return5_pct") setSelectedPeriod(5);
+    else if (nextKey === "rps10" || nextKey === "return10_pct") setSelectedPeriod(10);
+    else if (nextKey === "rps15" || nextKey === "return15_pct") setSelectedPeriod(15);
+    else if (nextKey === "rps20" || nextKey === "return20_pct") setSelectedPeriod(20);
+
     if (sortKey === nextKey) {
       setSortDirection(direction => direction === "desc" ? "asc" : "desc");
       return;
@@ -255,55 +265,142 @@ export function SectorStrength() {
     ? new Date(snapshot.computed_at * 1000).toLocaleString("zh-CN", { hour12: false })
     : null;
 
+  const topSector = useMemo(() => {
+    if (!snapshot?.rows?.length) return null;
+    const rKey = rpsKey(selectedPeriod);
+    const valid = snapshot.rows.filter(r => r[rKey] != null);
+    if (!valid.length) return null;
+    return [...valid].sort((a, b) => (b[rKey] ?? 0) - (a[rKey] ?? 0))[0];
+  }, [selectedPeriod, snapshot]);
+
+  const exportCsv = () => {
+    if (!displayedRows.length) return;
+    const currentRetKey = `return${selectedPeriod}_pct` as ReturnKey;
+    const headers = ["序号", "板块代码", "板块名称", `${selectedPeriod}日涨幅(%)`, "RPS5", "RPS10", "RPS15", "RPS20", "最新点位"];
+    const rows = displayedRows.map((r, i) => [
+      i + 1,
+      r.code,
+      r.name,
+      r[currentRetKey] != null ? `${r[currentRetKey]!.toFixed(2)}%` : "",
+      r.rps5 ?? "",
+      r.rps10 ?? "",
+      r.rps15 ?? "",
+      r.rps20 ?? "",
+      r.latest_close ?? "",
+    ]);
+    const csvContent = "﻿" + [headers.join(","), ...rows.map(row => row.map(v => `"${v}"`).join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `板块强度_${selectedPeriod}日_${snapshot?.trade_date ?? "export"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <PageHeader
         title="板块强度"
-        subtitle="直接使用通达信板块日 K，计算 RPS5 / RPS10 / RPS15 / RPS20 横截面列表。"
+        subtitle="按通达信扩展数据口径计算：日线精确复权，0–1000 归一化升序后 ÷10 展示 RPS5 / RPS10 / RPS15 / RPS20。"
         actions={(
-          <button
-            type="button"
-            onClick={() => void load(true)}
-            disabled={loadingSources || loadingRps || refreshing}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-4 w-4", (refreshing || loadingRps) && "animate-spin")} />
-            重新计算
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportCsv}
+              disabled={displayedRows.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+              title="导出当前筛选结果为 CSV"
+            >
+              <Download className="h-4 w-4" />
+              导出 CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => void load(true)}
+              disabled={loadingSources || loadingRps || refreshing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+            >
+              <RefreshCw className={cn("h-4 w-4", (refreshing || loadingRps) && "animate-spin")} />
+              重新计算
+            </button>
+          </div>
         )}
       />
 
-      <GlassCard className="mb-4 !p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <Database className="h-4 w-4" />
-              基础数据源 <strong className="font-mono text-foreground">{sources.length}</strong> 个
+      {/* ── 3个 Pro-Terminal KPI 摘要卡 ── */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <GlassCard className="!p-3.5 relative overflow-hidden border-l-2 border-l-sky-500">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Database className="h-3.5 w-3.5 text-sky-400" />
+              纳入板块池
             </span>
-            {snapshot?.trade_date && (
-              <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-primary">
-                RPS 基准日 {snapshot.trade_date}
-              </span>
-            )}
-            {snapshot && (
-              <span>
-                有效 <strong className="font-mono text-foreground">{snapshot.available_count}</strong>
-                {snapshot.unavailable_count > 0 && (
-                  <> · 异常 <strong className="font-mono text-warning">{snapshot.unavailable_count}</strong></>
-                )}
-              </span>
-            )}
-            {computedAt && <span>计算于 {computedAt}</span>}
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {sources.length} 个
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={openAdd}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-          >
-            <Plus className="h-3.5 w-3.5" /> 新增数据源
-          </button>
-        </div>
-      </GlassCard>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold font-mono font-num text-foreground">
+              {snapshot?.available_count ?? sources.length}
+            </span>
+            <span className="text-xs text-muted-foreground">个有效日线</span>
+            {snapshot && snapshot.unavailable_count > 0 && (
+              <span className="text-xs text-warning font-mono">
+                ({snapshot.unavailable_count} 异常)
+              </span>
+            )}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="!p-3.5 relative overflow-hidden border-l-2 border-l-market-up/70">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <Flame className="h-3.5 w-3.5 text-market-up" />
+              {`RPS${selectedPeriod}`} 领跑板块
+            </span>
+            {topSector && (
+              <span className="font-mono text-[11px] text-market-up font-bold">
+                TOP 1
+              </span>
+            )}
+          </div>
+          <div className="mt-2 flex items-baseline justify-between gap-2">
+            <span className="text-lg font-bold truncate text-foreground">
+              {topSector ? topSector.name : "—"}
+            </span>
+            {topSector && topSector[rpsKey(selectedPeriod)] != null && (
+              <span className="font-mono font-bold text-xl text-market-up font-num">
+                {topSector[rpsKey(selectedPeriod)]!.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="!p-3.5 relative overflow-hidden border-l-2 border-l-emerald-500">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+              基准与状态
+            </span>
+            <button
+              type="button"
+              onClick={openAdd}
+              className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+            >
+              <Plus className="h-3 w-3" /> 新增数据源
+            </button>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="font-mono font-bold text-base text-foreground">
+              {snapshot?.trade_date ?? "待计算"}
+            </span>
+            <span className="text-[11px] text-muted-foreground truncate">
+              {computedAt ? `更新于 ${computedAt.split(" ")[1]}` : "全量精确复权"}
+            </span>
+          </div>
+        </GlassCard>
+      </div>
 
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
@@ -415,7 +512,7 @@ export function SectorStrength() {
           <div className="border-b border-border/50 px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-sm font-semibold">RPS20 完整列表</h2>
+                <h2 className="text-sm font-semibold">RPS{selectedPeriod} 完整列表</h2>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   共 {displayedRows.length} 个板块；点击表头可切换排序，每页 {PAGE_SIZE} 条。
                 </p>
@@ -429,11 +526,19 @@ export function SectorStrength() {
           </div>
           <div className="max-h-[760px] overflow-auto">
             <table className="w-full min-w-[900px] text-sm">
-              <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur">
+              <thead className="sticky top-0 z-[3] bg-card/95 backdrop-blur">
                 <tr className="border-b border-border/60 text-left text-[11px] text-muted-foreground">
-                  <th className="px-3 py-2.5 font-medium">序号</th>
-                  <SortHeader label="板块代码 / 名称" columnKey="code" sortKey={sortKey} direction={sortDirection} onSort={changeSort} align="left" />
-                  <SortHeader label="20日涨幅" columnKey="return20_pct" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+                  <th className="sticky left-0 z-[4] bg-card/95 backdrop-blur px-3 py-2.5 font-medium">序号</th>
+                  <SortHeader
+                    label="板块代码 / 名称"
+                    columnKey="code"
+                    sortKey={sortKey}
+                    direction={sortDirection}
+                    onSort={changeSort}
+                    align="left"
+                    className="sticky left-10 z-[4] bg-card/95 backdrop-blur shadow-[2px_0_5px_rgba(0,0,0,0.25)]"
+                  />
+                  <SortHeader label={`${selectedPeriod}日涨幅`} columnKey={`return${selectedPeriod}_pct` as ReturnKey} sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
                   {PERIODS.map(period => (
                     <SortHeader
                       key={period}
@@ -442,7 +547,7 @@ export function SectorStrength() {
                       sortKey={sortKey}
                       direction={sortDirection}
                       onSort={changeSort}
-                      className={period === 20 ? "text-primary" : undefined}
+                      className={period === selectedPeriod ? "text-market-up/90 font-semibold" : undefined}
                     />
                   ))}
                   <SortHeader label="最新点位" columnKey="latest_close" sortKey={sortKey} direction={sortDirection} onSort={changeSort} />
@@ -453,13 +558,14 @@ export function SectorStrength() {
                 {pagedRows.map((row, index) => {
                   const source = sourceByCode.get(row.code);
                   const rank = (currentPage - 1) * PAGE_SIZE + index + 1;
+                  const currentReturn = row[`return${selectedPeriod}_pct` as ReturnKey];
                   return (
                     <tr key={row.code} className="border-b border-border/30 transition-colors hover:bg-muted/20">
-                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{rank}</td>
-                      <td className="px-3 py-2.5">
+                      <td className="sticky left-0 z-[2] bg-card/95 backdrop-blur px-3 py-2.5 font-mono font-num text-xs text-muted-foreground">{rank}</td>
+                      <td className="sticky left-10 z-[2] bg-card/95 backdrop-blur px-3 py-2.5 shadow-[2px_0_5px_rgba(0,0,0,0.25)]">
                         <div className="font-medium">{row.name}</div>
                         <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-                          <span>{row.code}</span>
+                          <span className="font-num">{row.code}</span>
                           {row.status !== "ok" && (
                             <span className="font-sans text-warning" title={row.error ?? undefined}>
                               {row.status === "stale" ? "日线滞后" : "无日线"}
@@ -467,19 +573,25 @@ export function SectorStrength() {
                           )}
                         </div>
                       </td>
-                      <td className={cn("px-3 py-2.5 text-right font-mono", returnTone(row.return20_pct))}>
-                        {formatReturn(row.return20_pct)}
+                      <td className={cn("px-3 py-2.5 text-right font-mono font-num", returnTone(currentReturn))}>
+                        {formatReturn(currentReturn)}
                       </td>
-                      {PERIODS.map(period => (
-                        <td key={period} className={cn(
-                          "px-3 py-2.5 text-right font-mono",
-                          rpsTone(row[rpsKey(period)]),
-                          period === 20 && "bg-primary/[0.035]",
-                        )}>
-                          {formatNumber(row[rpsKey(period)])}
-                        </td>
-                      ))}
-                      <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                      {PERIODS.map(period => {
+                        const val = row[rpsKey(period)];
+                        return (
+                          <td
+                            key={period}
+                            className={cn(
+                              "px-3 py-2.5 text-right font-mono font-num",
+                              rpsTone(val),
+                              period === selectedPeriod && "font-semibold",
+                            )}
+                          >
+                            {formatNumber(val, 2)}
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2.5 text-right font-mono font-num text-xs text-muted-foreground">
                         {formatNumber(row.latest_close, row.latest_close != null && row.latest_close < 10 ? 3 : 2)}
                       </td>
                       <td className="px-3 py-2.5 text-right">

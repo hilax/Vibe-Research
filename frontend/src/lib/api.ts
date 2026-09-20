@@ -378,7 +378,7 @@ export interface QaRow { company: string; question: string; answer: string | nul
 export interface IndustryRow { rank: number; name: string; change_pct: number; code: string; up_count: number; down_count: number }
 export interface IndustryData { top: IndustryRow[]; bottom: IndustryRow[]; total: number }
 
-// 通达信板块强度：用户维护代码/名称，后端直接按板块日 K 计算横截面 RPS。
+// 通达信板块强度：精确前复权后生成 0–1000 横向顺序值，再除以 10 展示 RPS。
 export interface SectorSource {
   code: string;
   name: string;
@@ -412,6 +412,9 @@ export interface SectorStrengthSnapshot {
   unavailable_count: number;
   ranked_count_by_period: Record<string, number>;
   periods: number[];
+  normalization_scale: number;
+  display_divisor: number;
+  adjustment: "exact_qfq";
   rule: string;
   rows: SectorStrengthRow[];
 }

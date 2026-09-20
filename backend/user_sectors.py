@@ -1,8 +1,8 @@
 """板块强度数据源与通达信板块 RPS 计算。
 
 用户维护的是通达信板块/指数/ETF 的 ``代码 + 名称``，而不是成分股。
-每个代码直接读取通达信日 K，按 N=5/10/15/20 日涨幅在同一板块池内做
-0—100 横截面顺序排名。用户修改后的数据源保存在仓库外的
+每个代码直接读取通达信日 K，按 N=5/10/15/20 日精确复权涨幅在同一板块池内
+生成 0—1000 横向归一化顺序数据，再除以 10 展示为 RPS。用户修改后的数据源保存在仓库外的
 ``~/.vibe-research/tdx_sectors.json``（可用 ``VR_DATA_DIR`` 覆盖）。
 """
 
@@ -35,7 +35,7 @@ _THREAD_LOCAL = threading.local()
 _CODE_RE = re.compile(r"^\d{6}$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 _PERIODS = (5, 10, 15, 20)
-_RPS_VERSION = 2
+_RPS_VERSION = 3
 _MEMORY_CACHE: dict[str, Any] = {}
 
 
@@ -305,10 +305,25 @@ def _fetch_tdx_daily_bars(code: str, offset: int = 32) -> list[dict[str, Any]]:
         return _fetch_once(code, offset)
 
 
+def _fetch_tdx_xdxr(code: str) -> list[dict[str, Any]]:
+    """读取通达信除权除息记录；连接失效时重建一次。"""
+    try:
+        return _records(_thread_client().xdxr(symbol=code))
+    except Exception:  # noqa: BLE001 — 单代码断线后重建一次
+        _reset_thread_client()
+        return _records(_thread_client().xdxr(symbol=code))
+
+
 def _history_for_sector(sector: dict[str, Any]) -> dict[str, Any]:
     code = sector["code"]
     try:
         bars = _fetch_tdx_daily_bars(code, max(_PERIODS) + 12)
+        raw_closes = [float(row["close"]) for row in bars]
+        closes = astock.exact_qfq_closes(
+            [row["trade_date"] for row in bars],
+            raw_closes,
+            _fetch_tdx_xdxr(code) if _is_fund_code(code) else [],
+        )
     except Exception as exc:  # noqa: BLE001 — 单板块失败不影响其余榜单
         _reset_thread_client()
         return {
@@ -330,7 +345,6 @@ def _history_for_sector(sector: dict[str, Any]) -> dict[str, Any]:
             "returns": {},
             "error": "通达信未返回该代码的板块日线",
         }
-    closes = [float(row["close"]) for row in bars]
     returns = {
         period: closes[-1] / closes[-period - 1] - 1
         for period in _PERIODS
@@ -360,7 +374,13 @@ def _percentile_ranks(items: list[dict[str, Any]], period: int) -> dict[str, flo
         ):
             end += 1
         average_rank = (index + end) / 2
-        percentile = round(average_rank / (count - 1) * 100 if count > 1 else 100, 2)
+        # 通达信扩展数据先生成 0—1000 的整数横向顺序值，公式再除以 10 得到 RPS。
+        # 不能直接把百分位保留两位小数，否则会产生截图中那种轻微偏差。
+        normalized_1000 = (
+            math.floor(average_rank / (count - 1) * 1000 + 0.5)
+            if count > 1 else 1000
+        )
+        percentile = normalized_1000 / 10
         for cursor in range(index, end + 1):
             ranks[ordered[cursor]["code"]] = percentile
         index = end + 1
@@ -488,10 +508,14 @@ def _build_snapshot(sectors: list[dict[str, Any]], digest: str) -> dict[str, Any
         "unavailable_count": len(rows) - available_count,
         "ranked_count_by_period": ranked_counts,
         "periods": list(_PERIODS),
+        "normalization_scale": 1000,
+        "display_divisor": 10,
+        "adjustment": "exact_qfq",
         "rule": (
-            "对每个已维护的通达信板块代码直接读取日K，按"
-            "(C-REF(C,N))/REF(C,N)计算N=5/10/15/20日涨幅，"
-            "再在同一交易日且该周期历史足够的板块池内做0—100顺序百分位排名；"
+            "对每个已维护的通达信板块代码直接读取日K并按通达信除权除息记录精确前复权，"
+            "按(C-REF(C,N))/REF(C,N)计算N=5/10/15/20日涨幅；"
+            "再在同一交易日且该周期历史足够的板块池内生成0—1000归一化升序横向排名数据，"
+            "最终除以10显示为0—100的一位小数RPS；"
             "这是客观机械排序，不构成推荐。"
         ),
         "rows": rows,
@@ -511,6 +535,9 @@ def compute_all_sector_rps(*, force_refresh: bool = False) -> dict[str, Any]:
             "unavailable_count": 0,
             "ranked_count_by_period": {str(period): 0 for period in _PERIODS},
             "periods": list(_PERIODS),
+            "normalization_scale": 1000,
+            "display_divisor": 10,
+            "adjustment": "exact_qfq",
             "rule": "暂无板块基础数据源。",
             "rows": [],
         }

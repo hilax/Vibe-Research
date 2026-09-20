@@ -15,31 +15,37 @@
     --card: 222 40% 9%;                /* 卡底（玻璃质感另用 .glass 叠加） */
     --card-foreground: 210 30% 92%;
 
+    /* Pro-Terminal Surface Hierarchy */
+    --surface-0: 222 47% 6%;
+    --surface-1: 222 38% 9%;
+    --surface-2: 220 28% 13%;
+    --surface-3: 218 24% 18%;
+
     --primary: 15 89% 56%;             /* 暖橙红主色（朱橙 ≈#F35D2B）—— A股红盘气质，替代原青光 */
     --primary-foreground: 222 47% 6%;
     --accent: 25 95% 58%;              /* 橙 · 强调/告警点缀 */
     --accent-foreground: 222 47% 6%;
 
-    --muted: 220 28% 15%;              /* surface-2 */
+    --muted: 220 28% 13%;              /* surface-2 */
     --muted-foreground: 215 18% 62%;
     --destructive: 0 72% 58%;
     --destructive-foreground: 0 0% 100%;
-    --border: 210 30% 22%;             /* surface-3 边框 */
-    --radius: 1rem;
+    --border: 216 22% 19%;             /* surface-3 边框 */
+    --radius: 0.875rem;
 
     /* 语义色（涨跌配色由页面按 A股红涨绿跌自行选用 success/danger） */
     --success: 145 62% 47%;
     --danger: 0 74% 60%;
-    --market-up: 0 74% 60%;
-    --market-down: 145 62% 47%;
+    --market-up: 0 78% 60%;
+    --market-down: 152 68% 46%;
     --warning: 38 92% 55%;
     --info: 15 89% 56%;
 
     /* 玻璃发丝边框 / 内高光（rgba，供 .glass 使用） */
-    --glass-fill-top: rgba(255, 255, 255, 0.055);
+    --glass-fill-top: rgba(255, 255, 255, 0.045);
     --glass-fill-bot: rgba(255, 255, 255, 0.012);
-    --glass-stroke: rgba(255, 232, 214, 0.10);
-    --glass-hi: rgba(255, 255, 255, 0.06);
+    --glass-stroke: rgba(255, 255, 255, 0.08);
+    --glass-hi: rgba(255, 255, 255, 0.05);
 
     /* Chart tokens */
     --chart-grid: 220 20% 14%;
@@ -52,6 +58,11 @@
     --foreground: 222 40% 12%;
     --card: 0 0% 100%;
     --card-foreground: 222 40% 12%;
+
+    --surface-0: 210 30% 97%;
+    --surface-1: 0 0% 100%;
+    --surface-2: 210 20% 93%;
+    --surface-3: 214 20% 86%;
 
     --primary: 15 82% 50%;             /* 暖橙红主色（亮色版，略深保对比） */
     --primary-foreground: 0 0% 100%;
@@ -71,9 +82,9 @@
     --warning: 38 92% 45%;
     --info: 15 82% 50%;
 
-    --glass-fill-top: rgba(255, 255, 255, 0.7);
-    --glass-fill-bot: rgba(255, 255, 255, 0.35);
-    --glass-stroke: rgba(15, 40, 70, 0.10);
+    --glass-fill-top: rgba(255, 255, 255, 0.75);
+    --glass-fill-bot: rgba(255, 255, 255, 0.4);
+    --glass-stroke: rgba(15, 40, 70, 0.12);
     --glass-hi: rgba(255, 255, 255, 0.8);
 
     --chart-grid: 214 20% 88%;
@@ -90,6 +101,14 @@
   .light.market-subtle {
     --market-up: 24 10% 40%;
     --market-down: 205 10% 44%;
+  }
+
+  .market-subtle .glass-glow::before {
+    opacity: 0;
+  }
+
+  .market-subtle .text-glow {
+    text-shadow: none;
   }
 
   * { @apply border-border; }
@@ -132,6 +151,39 @@
     -webkit-backdrop-filter: blur(14px);
   }
   .light .glass { box-shadow: 0 10px 26px rgba(30, 60, 100, 0.10), inset 0 1px 0 var(--glass-hi); }
+
+  /* Pro-Terminal 卡片：深石墨底 + 超细发丝边框 + 微内阴影（高信息密度专用） */
+  .pro-card {
+    background-color: hsl(var(--surface-1) / 0.85);
+    border: 1px solid hsl(var(--border) / 0.7);
+    border-radius: var(--radius);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .light .pro-card {
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  }
+
+  /* 行情微缩胶囊 pill */
+  .ticker-pill {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-mono transition-all;
+    background-color: hsl(var(--surface-2) / 0.6);
+    border-color: hsl(var(--border) / 0.8);
+  }
+  .ticker-pill:hover {
+    background-color: hsl(var(--surface-2));
+    border-color: hsl(var(--primary) / 0.4);
+  }
+
+  /* 数字严格等宽 */
+  .font-num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    letter-spacing: -0.02em;
+  }
 
   /* 顶角暖橙光晕（配 .glass 用，装饰热点） */
   .glass-glow { position: relative; overflow: hidden; }

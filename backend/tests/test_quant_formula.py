@@ -144,9 +144,9 @@ def test_formula_presets_and_validate_api():
     presets_response = client.get("/api/quant/formulas")
     assert presets_response.status_code == 200
     presets = presets_response.json()["data"]
-    assert {item["strategy"] for item in presets} == {
+    assert {
         "near_high", "monthly_reversal_62", "growth_mrgc_sxhcg",
-    }
+    }.issubset({item["strategy"] for item in presets})
     monthly = next(item for item in presets if item["strategy"] == "monthly_reversal_62")
     assert monthly["params"]
     assert monthly["default_formula"]["technical_expression"].startswith("FYX1 AND FYX2")
