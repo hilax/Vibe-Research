@@ -161,3 +161,42 @@ def test_quant_screen_validation():
     assert client.post("/api/quant/screen", json={"near_high_pct": -1}).status_code == 422
     assert client.post("/api/quant/screen", json={"lookback_days": 20}).status_code == 422
     assert client.post("/api/quant/screen", json={"strategy": "unknown"}).status_code == 422
+
+
+def test_compute_3l_metrics():
+    bars = _trend_bars(60)
+    row = {"code": "600519", "rps250": 95, "rps120": 92}
+    quant._compute_3l_metrics(bars, row)
+    assert row["ma20"] is not None
+    assert row["ma20_slope"] in ("up", "down", "flat")
+    assert row["stop_loss_hard_8"] == round(row["close"] * 0.92, 2)
+    assert row["stop_loss_hard_5"] == round(row["close"] * 0.95, 2)
+    assert row["key_support"] is not None
+    assert row["risk_reward_ratio"] is not None
+    assert row["timing_status"] in ("均线低吸点", "关键点突破", "主升通道", "乖离过大", "破位回避", "震荡整理")
+    assert isinstance(row["risk_tags"], list)
+
+
+def test_backtest_summary_and_forward_returns():
+    row = {"code": "600519", "close": 100.0}
+    future_bars = [
+        {"close": 102.0, "high": 103.0, "low": 99.0},
+        {"close": 103.0, "high": 104.0, "low": 101.0},
+        {"close": 104.0, "high": 105.0, "low": 102.0},
+        {"close": 105.0, "high": 106.0, "low": 103.0},
+        {"close": 108.0, "high": 109.0, "low": 104.0},  # T+5
+    ] + [{"close": 110.0 + i, "high": 112.0 + i, "low": 109.0 + i} for i in range(20)]
+
+    quant._apply_forward_returns(row, future_bars)
+    assert row["return_5d"] == 8.0
+    assert row["return_10d"] is not None
+    assert row["return_20d"] is not None
+    assert row["max_gain_20d"] is not None
+
+    summary = quant._compute_backtest_summary("2026-06-01", [row])
+    assert summary is not None
+    assert summary["sample_count"] == 1
+    assert summary["win_rate_5d"] == 100.0
+    assert summary["avg_return_5d"] == 8.0
+    assert summary["win_rate_20d"] == 100.0
+

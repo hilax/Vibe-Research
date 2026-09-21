@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronUp,
-  Code2, Database, Download, Eye, Flame, Filter, Layers3, LineChart, LoaderCircle,
-  Pencil, Play, Plus, RefreshCw, Rocket, Search, SlidersHorizontal, Sparkles,
-  Square, Star, Target, TrendingUp, Wand2, X,
+  AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, BarChart3,
+  Check, ChevronDown, ChevronUp, Code2, Database,
+  Download, Eye, Flame, Filter, History, Layers3, LineChart,
+  LoaderCircle, Pencil, Play, Plus, RefreshCw, Rocket, Search,
+  SlidersHorizontal, Sparkles, Square, Star,
+  Target, TrendingUp, Wand2, X, Zap,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -164,6 +166,70 @@ const TAG_META: Record<StrategyTag, { label: string; tone: string }> = {
   drawdown:   { label: "严格回撤", tone: "border-rose-400/40 bg-rose-400/10 text-rose-400" },
 };
 
+// ── 3L 交易体系 · 买前十问标准复核清单 ─────────────────────────────────────
+const QUESTIONS_3L = [
+  {
+    id: 1,
+    title: "大盘环境处于可操作窗口",
+    desc: "大盘指数未处于主跌浪或系统性流动性危机中，大盘均线多头或企稳反弹（参考 7.1 大盘指数的作用）。",
+    source: "7.1 大盘环境",
+  },
+  {
+    id: 2,
+    title: "符合动量主线（第一个L）",
+    desc: "个股 RPS250 / RPS120 / RPS50 任一 ≥ 90，属于全市场涨幅前 10% 的超级领涨品种（参考 3.1 动量主线）。",
+    source: "3.1 动量主线",
+  },
+  {
+    id: 3,
+    title: "一年新高印证",
+    desc: "当前价格距离一年新高（250日最高价）不超过 15%，具备不断向上拓宽空间的动量特征（参考 3.5 新高印证）。",
+    source: "3.5 新高印证",
+  },
+  {
+    id: 4,
+    title: "具备不可证伪的最强逻辑（第二个L）",
+    desc: "个股所处行业存在强催化剂（如业绩暴增、行业拐点、政策重磅扶持），非纯情绪博弈（参考 4.1 最强逻辑）。",
+    source: "4.1 最强逻辑",
+  },
+  {
+    id: 5,
+    title: "明确的关键点形态（第三个L）",
+    desc: "形态处于平台突破、箱体突破、或经过充分缩量回调企稳的关键转折点（参考 6.2 关键点）。",
+    source: "6.2 关键点",
+  },
+  {
+    id: 6,
+    title: "生命线 MA20 向上且未过度乖离",
+    desc: "20日均线向上延伸，当前股价距离 MA20 乖离率 ≤ 15%，非连续拉升后的严重超买（参考 6.3 入场时机）。",
+    source: "6.3 入场时机",
+  },
+  {
+    id: 7,
+    title: "严格明确的硬止损与结构止损预案",
+    desc: "已设定硬止损点（-5% ~ -8%）与结构支撑位（跌破 MA20 / 前低坚决离场），绝不抱有侥幸心理（参考 6.4 止损点）。",
+    source: "6.4 止损点",
+  },
+  {
+    id: 8,
+    title: "盈亏比 ≥ 3:1",
+    desc: "根据上方前期阻力位计算出的潜在获利空间，至少是到止损位亏损空间的 3 倍以上（参考 6.5 止盈点）。",
+    source: "6.5 止盈点",
+  },
+  {
+    id: 9,
+    title: "已排除回避模板特征",
+    desc: "无高位放巨量长上影滞涨、无主跌浪破位、无重大不可逆基本面利空（参考 6.7 回避模板）。",
+    source: "6.7 回避模板",
+  },
+  {
+    id: 10,
+    title: "仓位纪律与风险优先",
+    desc: "单票仓位符合风控规则，绝不逆势加仓摊薄成本，买入前已接受最大潜在亏损（参考 8.2 仓位控制）。",
+    source: "8.2 仓位控制",
+  },
+];
+
 const FORMULA_DRAFTS_KEY = "vr-quant-tdx-source-drafts-v1";
 const CUSTOM_STRATEGIES_KEY = "vr-quant-custom-strategies-v1";
 const BUILTIN_OVERRIDES_KEY = "vr-quant-builtin-overrides-v1";
@@ -283,6 +349,14 @@ export function QuantScreening() {
   // 结果表格内实时搜索与快捷筛选
   const [tableSearch, setTableSearch] = useState("");
   const [tableFilter, setTableFilter] = useState<"all" | "up" | "high_rps" | "unwatched">("all");
+
+  // ── 模式与回测参数 ──
+  const [screenMode, setScreenMode] = useState<"live" | "backtest">("live");
+  const [asOfDate, setAsOfDate] = useState<string>("");
+
+  // ── 3L 买前十问弹窗状态 ──
+  const [checklistStock, setChecklistStock] = useState<QuantRow | null>(null);
+  const [checkedQuestions, setCheckedQuestions] = useState<Record<number, boolean>>({});
 
   // 新增策略表单
   const [showAddForm, setShowAddForm] = useState(false);
@@ -479,7 +553,9 @@ export function QuantScreening() {
     | "rps20" | "rps50" | "rps120" | "rps250"
     | "turnover_pct" | "revenue_yoy_pct" | "net_profit_yoy_pct"
     | "close" | "year_high" | "distance_to_high_pct"
-    | "change_pct";
+    | "change_pct"
+    | "ma20" | "key_support" | "risk_reward_ratio" | "timing_score"
+    | "return_5d" | "return_10d" | "return_20d" | "return_60d" | "max_gain_20d" | "max_dd_20d";
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const toggleSort = (key: SortKey) => {
@@ -609,6 +685,7 @@ export function QuantScreening() {
           fund_ratio_min: fundRatioMin,
           north_value_min_yi: northValueMin,
           formula_source: checked.normalized_source,
+          as_of_date: screenMode === "backtest" && asOfDate ? asOfDate : undefined,
         },
         (ev: QuantStreamEvent) => {
           if (ev.type === "progress") {
@@ -1183,6 +1260,91 @@ export function QuantScreening() {
 
         {/* 核心筛选链路配置（基础池 + 公式） */}
         <div className="space-y-3">
+          {/* ── 选股模式切换：实时选股 vs 历史回测 ── */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/50 bg-black/20 p-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                {screenMode === "live" ? <Zap className="h-4 w-4" /> : <History className="h-4 w-4" />}
+              </span>
+              <div>
+                <span className="text-xs font-semibold text-foreground">
+                  {screenMode === "live" ? "实时选股模式" : "历史回测模式"}
+                </span>
+                <span className="ml-2 text-[11px] text-muted-foreground">
+                  {screenMode === "live"
+                    ? "使用最新行情与 RPS 执行筛选"
+                    : "回放到指定历史交易日执行选股，并自动跟踪 T+5/10/20/60 胜率与收益表现"}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => { setScreenMode("live"); setAsOfDate(""); setResult(null); }}
+                  className={cn(
+                    "rounded-md px-3 py-1 font-medium transition-all",
+                    screenMode === "live" ? "bg-primary/20 text-primary font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  今日实时
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScreenMode("backtest");
+                    setResult(null);
+                    if (!asOfDate) {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 30);
+                      setAsOfDate(d.toISOString().slice(0, 10));
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-1 rounded-md px-3 py-1 font-medium transition-all",
+                    screenMode === "backtest" ? "bg-primary/20 text-primary font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <History className="h-3.5 w-3.5" />
+                  历史回测
+                </button>
+              </div>
+
+              {screenMode === "backtest" && (
+                <div className="flex flex-wrap items-center gap-1.5 animate-in fade-in-50">
+                  <input
+                    type="date"
+                    value={asOfDate}
+                    onChange={(e) => { setAsOfDate(e.target.value); setResult(null); }}
+                    className="rounded-lg border border-border/60 bg-black/40 px-2.5 py-1 text-xs font-mono outline-none focus:border-primary/50"
+                  />
+                  {[
+                    { label: "1周前", days: 7 },
+                    { label: "1个月前", days: 30 },
+                    { label: "3个月前", days: 90 },
+                    { label: "半年前", days: 180 },
+                    { label: "1年前", days: 365 },
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() - item.days);
+                        setAsOfDate(d.toISOString().slice(0, 10));
+                        setResult(null);
+                      }}
+                      className="rounded border border-border/50 bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             {/* 基础池条件 */}
             <div className="rounded-xl border border-border/50 bg-black/20 p-3.5">
@@ -1425,6 +1587,64 @@ export function QuantScreening() {
       {/* ── 筛选结果看板 ── */}
       {result && (
         <div className="space-y-4">
+          {/* ── 策略历史回测表现看板 ── */}
+          {result.backtest_summary && (
+            <GlassCard className="!p-4 border-l-4 border-l-emerald-500" glow>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2.5 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-400">
+                    <BarChart3 className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="text-sm font-semibold text-foreground">
+                    策略历史回测表现 · 胜率与收益统计
+                  </span>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-400">
+                    基准日期: {result.backtest_summary.as_of_date} · 样本: {result.backtest_summary.sample_count} 只
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>20日盈亏比: <strong className="font-mono text-foreground font-num">{result.backtest_summary.profit_loss_ratio_20d ?? "—"}</strong></span>
+                  <span>20日最高中位数: <strong className="font-mono text-market-up font-num">+{result.backtest_summary.max_gain_median_20d ?? 0}%</strong></span>
+                  <span>20日最大跌中位数: <strong className="font-mono text-market-down font-num">{result.backtest_summary.max_dd_median_20d ?? 0}%</strong></span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: "T+5 胜率与收益", win: result.backtest_summary.win_rate_5d, ret: result.backtest_summary.avg_return_5d },
+                  { label: "T+10 胜率与收益", win: result.backtest_summary.win_rate_10d, ret: result.backtest_summary.avg_return_10d },
+                  { label: "T+20 胜率与收益", win: result.backtest_summary.win_rate_20d, ret: result.backtest_summary.avg_return_20d },
+                  { label: "T+60 胜率与收益", win: result.backtest_summary.win_rate_60d, ret: result.backtest_summary.avg_return_60d },
+                ].map((item, idx) => (
+                  <div key={idx} className="rounded-lg border border-border/50 bg-black/25 p-2.5">
+                    <div className="text-[11px] text-muted-foreground mb-1">{item.label}</div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-lg font-bold font-mono font-num text-foreground">
+                        {item.win != null ? `${item.win}%` : "—"}
+                      </span>
+                      <span className={cn(
+                        "font-mono font-semibold text-xs",
+                        item.ret == null ? "text-muted-foreground" :
+                        item.ret > 0 ? "text-market-up" : "text-market-down"
+                      )}>
+                        {item.ret != null ? `${item.ret > 0 ? "+" : ""}${item.ret}%` : "—"}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-border/40">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          (item.win ?? 0) >= 60 ? "bg-emerald-400" : (item.win ?? 0) >= 50 ? "bg-amber-400" : "bg-muted-foreground"
+                        )}
+                        style={{ width: `${Math.min(100, Math.max(0, item.win ?? 0))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <GlassCard className="!p-4 relative overflow-hidden border-l-4 border-l-blue-500">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1655,7 +1875,19 @@ export function QuantScreening() {
                         </>
                       )}
                       <SortHead k="close" label="最新收盘" align="right" />
-                      <SortHead k="year_high" label="一年最高" align="right" />
+                      <SortHead k="timing_score" label="3L择时/形态" />
+                      <SortHead k="ma20" label="生命线MA20" align="right" />
+                      <SortHead k="key_support" label="支撑/止损" align="right" />
+                      <SortHead k="risk_reward_ratio" label="盈亏比" align="right" />
+                      {result.backtest_summary && (
+                        <>
+                          <SortHead k="return_5d" label="T+5收益" align="right" />
+                          <SortHead k="return_10d" label="T+10收益" align="right" />
+                          <SortHead k="return_20d" label="T+20收益" align="right" />
+                          <SortHead k="max_gain_20d" label="20日最高" align="right" />
+                          <SortHead k="max_dd_20d" label="20日最大跌" align="right" />
+                        </>
+                      )}
                       <SortHead k="distance_to_high_pct" label="距新高" align="right" />
                       <th className="whitespace-nowrap px-3 py-2.5 font-medium">K线日期</th>
                       <th className="whitespace-nowrap px-3 py-2.5 font-medium text-center">操作</th>
@@ -1761,12 +1993,113 @@ export function QuantScreening() {
                           </>
                         )}
 
+                        {/* 最新收盘 */}
                         <td className="px-3 py-2.5 text-right font-mono font-num font-medium">
                           {numberText(row.close, 2)}
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono font-num text-muted-foreground">
-                          {numberText(row.year_high, 2)}
+
+                        {/* 3L 择时评估与买前十问入口 */}
+                        <td className="whitespace-nowrap px-3 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setChecklistStock(row);
+                              }}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold transition-all hover:scale-105",
+                                row.timing_status === "均线低吸点" ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40" :
+                                row.timing_status === "关键点突破" ? "bg-primary/20 text-primary ring-1 ring-primary/40" :
+                                row.timing_status === "主升通道" ? "bg-sky-500/20 text-sky-400" :
+                                row.timing_status === "乖离过大" ? "bg-amber-500/20 text-amber-400" :
+                                row.timing_status === "破位回避" ? "bg-rose-500/20 text-rose-400" :
+                                "bg-white/10 text-muted-foreground"
+                              )}
+                              title="点击进行 3L 买前十问知行合一复核"
+                            >
+                              <Target className="h-3 w-3" />
+                              <span>{row.timing_status || "—"}</span>
+                            </button>
+                            {row.risk_tags && row.risk_tags.length > 0 && (
+                              <span className="rounded bg-rose-500/15 px-1 py-0.2 text-[9px] font-medium text-rose-400">
+                                {row.risk_tags[0]}
+                              </span>
+                            )}
+                          </div>
                         </td>
+
+                        {/* 生命线 MA20 */}
+                        <td className="px-3 py-2.5 text-right font-mono font-num text-xs">
+                          {row.ma20 != null ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <span>{numberText(row.ma20, 2)}</span>
+                              <span className={cn(
+                                "text-[10px]",
+                                row.ma20_slope === "up" ? "text-market-up" :
+                                row.ma20_slope === "down" ? "text-market-down" : "text-muted-foreground"
+                              )}>
+                                {row.ma20_slope === "up" ? "▲" : row.ma20_slope === "down" ? "▼" : "—"}
+                              </span>
+                            </div>
+                          ) : "—"}
+                        </td>
+
+                        {/* 支撑防线 */}
+                        <td className="px-3 py-2.5 text-right font-mono font-num text-xs">
+                          <div className="flex flex-col items-end leading-tight">
+                            <span className="text-foreground/90">{numberText(row.key_support, 2)}</span>
+                            <span className="text-[10px] text-rose-400/80">-{numberText(row.stop_loss_hard_8, 2)}</span>
+                          </div>
+                        </td>
+
+                        {/* 预估盈亏比 */}
+                        <td className="px-3 py-2.5 text-right font-mono font-num">
+                          {row.risk_reward_ratio != null ? (
+                            <span className={cn(
+                              "font-semibold",
+                              row.risk_reward_ratio >= 3.0 ? "text-emerald-400" :
+                              row.risk_reward_ratio >= 2.0 ? "text-amber-400" : "text-muted-foreground"
+                            )}>
+                              {row.risk_reward_ratio}:1
+                            </span>
+                          ) : "—"}
+                        </td>
+
+                        {/* 回测收益列（仅在回测模式下展示） */}
+                        {result.backtest_summary && (
+                          <>
+                            <td className={cn(
+                              "px-3 py-2.5 text-right font-mono font-num",
+                              row.return_5d == null ? "text-muted-foreground" :
+                              row.return_5d > 0 ? "text-market-up font-medium" : "text-market-down font-medium"
+                            )}>
+                              {row.return_5d != null ? `${row.return_5d > 0 ? "+" : ""}${row.return_5d}%` : "—"}
+                            </td>
+                            <td className={cn(
+                              "px-3 py-2.5 text-right font-mono font-num",
+                              row.return_10d == null ? "text-muted-foreground" :
+                              row.return_10d > 0 ? "text-market-up font-medium" : "text-market-down font-medium"
+                            )}>
+                              {row.return_10d != null ? `${row.return_10d > 0 ? "+" : ""}${row.return_10d}%` : "—"}
+                            </td>
+                            <td className={cn(
+                              "px-3 py-2.5 text-right font-mono font-num",
+                              row.return_20d == null ? "text-muted-foreground" :
+                              row.return_20d > 0 ? "text-market-up font-bold" : "text-market-down font-bold"
+                            )}>
+                              {row.return_20d != null ? `${row.return_20d > 0 ? "+" : ""}${row.return_20d}%` : "—"}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono font-num text-market-up font-medium">
+                              {row.max_gain_20d != null ? `+${row.max_gain_20d}%` : "—"}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono font-num text-market-down font-medium">
+                              {row.max_dd_20d != null ? `${row.max_dd_20d}%` : "—"}
+                            </td>
+                          </>
+                        )}
+
+                        {/* 距新高 */}
                         <td className={cn(
                           "px-3 py-2.5 text-right font-mono font-num font-medium",
                           row.distance_to_high_pct != null && row.distance_to_high_pct <= 5
@@ -1831,10 +2164,164 @@ export function QuantScreening() {
             <p className="text-sm font-semibold text-foreground">准备开始两阶段量化选股</p>
             <p className="text-xs text-muted-foreground">
               选择上方的选股策略，根据需要调整基金或北向持股阈值，然后点击“验证并开始筛选”。
-              日 K 已实现本地持久化加速，筛选速度秒级响应。
+              支持今日实时选股与历史回测，日 K 本地持久化极速响应。
             </p>
           </div>
         </GlassCard>
+      )}
+
+      {/* ── 3L 买前十问知行合一检查表弹窗 ── */}
+      {checklistStock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in-50">
+          <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-primary/40 bg-card shadow-2xl overflow-hidden">
+            {/* 头部 */}
+            <div className="flex items-center justify-between border-b border-border/50 bg-black/40 px-6 py-4">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20 text-primary">
+                  <Target className="h-4 w-4" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">
+                    3L交易体系 · 买前十问知行合一检查表
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {checklistStock.name} ({checklistStock.code}) · 行业: {checklistStock.industry || "—"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setChecklistStock(null); setCheckedQuestions({}); }}
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* 关键数据摘要药丸 */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 border-b border-border/40 bg-black/20 p-3 text-xs">
+              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">最新收盘</div>
+                <div className="mt-0.5 font-mono font-bold font-num text-foreground">{checklistStock.close}</div>
+              </div>
+              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">生命线 MA20</div>
+                <div className="mt-0.5 font-mono font-bold font-num text-sky-400">{checklistStock.ma20 ?? "—"}</div>
+              </div>
+              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">硬止损(-8%)</div>
+                <div className="mt-0.5 font-mono font-bold font-num text-rose-400">{checklistStock.stop_loss_hard_8 ?? "—"}</div>
+              </div>
+              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+                <div className="text-[10px] text-muted-foreground">RPS250/120</div>
+                <div className="mt-0.5 font-mono font-bold font-num text-primary">{checklistStock.rps250 ?? "—"}/{checklistStock.rps120 ?? "—"}</div>
+              </div>
+              <div className="rounded border border-border/40 bg-black/30 p-2 text-center col-span-2 sm:col-span-1">
+                <div className="text-[10px] text-muted-foreground">预估盈亏比</div>
+                <div className={cn(
+                  "mt-0.5 font-mono font-bold font-num",
+                  (checklistStock.risk_reward_ratio ?? 0) >= 3 ? "text-emerald-400" : "text-amber-400"
+                )}>
+                  {checklistStock.risk_reward_ratio ? `${checklistStock.risk_reward_ratio}:1` : "—"}
+                </div>
+              </div>
+            </div>
+
+            {/* 十问清单列表（可滚动） */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2.5">
+              {QUESTIONS_3L.map((q) => {
+                const isChecked = !!checkedQuestions[q.id];
+                return (
+                  <div
+                    key={q.id}
+                    onClick={() => setCheckedQuestions((prev) => ({ ...prev, [q.id]: !prev[q.id] }))}
+                    className={cn(
+                      "group flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all",
+                      isChecked
+                        ? "border-primary/50 bg-primary/10 shadow-sm"
+                        : "border-border/60 bg-black/20 hover:border-primary/30 hover:bg-black/30"
+                    )}
+                  >
+                    <div className="mt-0.5 shrink-0">
+                      <div className={cn(
+                        "flex h-4 w-4 items-center justify-center rounded border transition-all",
+                        isChecked
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-muted-foreground/40 bg-transparent group-hover:border-primary/60"
+                      )}>
+                        {isChecked && <Check className="h-3 w-3" />}
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={cn(
+                          "text-xs font-semibold",
+                          isChecked ? "text-primary" : "text-foreground/90"
+                        )}>
+                          {q.id}. {q.title}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground opacity-60">
+                          {q.source}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                        {q.desc}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 底部评分与操作 */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 bg-black/40 px-6 py-3.5">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">知行合一评分:</span>
+                <span className={cn(
+                  "font-mono text-xl font-bold font-num",
+                  Object.values(checkedQuestions).filter(Boolean).length >= 8 ? "text-emerald-400" :
+                  Object.values(checkedQuestions).filter(Boolean).length >= 6 ? "text-amber-400" : "text-rose-400"
+                )}>
+                  {Object.values(checkedQuestions).filter(Boolean).length} / 10 分
+                </span>
+                <span className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  Object.values(checkedQuestions).filter(Boolean).length >= 8 ? "bg-emerald-500/15 text-emerald-400" :
+                  Object.values(checkedQuestions).filter(Boolean).length >= 6 ? "bg-amber-500/15 text-amber-400" : "bg-rose-500/15 text-rose-400"
+                )}>
+                  {Object.values(checkedQuestions).filter(Boolean).length >= 8 ? "符合3L买入纪律" :
+                   Object.values(checkedQuestions).filter(Boolean).length >= 6 ? "存在瑕疵·建议试错仓" : "不建议买入·严格回避"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const all: Record<number, boolean> = {};
+                    QUESTIONS_3L.forEach((q) => { all[q.id] = true; });
+                    setCheckedQuestions(all);
+                  }}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  一键全选
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (checklistStock) {
+                      handleAddWatch([checklistStock.code]);
+                      setChecklistStock(null);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground shadow-glow hover:bg-primary/90"
+                >
+                  <Star className="h-3.5 w-3.5" /> 加入自选
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

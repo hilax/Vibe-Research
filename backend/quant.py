@@ -1199,6 +1199,7 @@ def _run_screen_named_signals(
     fund_period: str | None = None,
     strategy: str = "near_high",
     formula: dict | None = None,
+    as_of_date: str | None = None,
 ) -> dict:
     if strategy not in _STRATEGIES:
         raise ValueError(f"不支持的量化策略：{strategy}")
@@ -1262,9 +1263,16 @@ def _run_screen_named_signals(
                 base_rows.append(row)
                 continue
             try:
+                if as_of_date:
+                    eval_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] <= as_of_date]
+                    future_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] > as_of_date]
+                else:
+                    eval_bars = bars
+                    future_bars = []
+
                 if strategy == "near_high":
                     technical = near_year_high(
-                        bars,
+                        eval_bars,
                         formula_params["max_distance_pct"],
                         formula_params["lookback_days"],
                     )
@@ -1279,20 +1287,23 @@ def _run_screen_named_signals(
                     else:
                         is_match = False
                 elif strategy == "monthly_reversal_62":
-                    technical = monthly_reversal_62(bars, rps, formula_config)
+                    technical = monthly_reversal_62(eval_bars, rps, formula_config)
                     is_match = bool(technical and technical["matched"])
                 else:
                     technical = growth_mrgc_sxhcg(
-                        bars, rps, row.get("turnover_pct"), formula_config,
+                        eval_bars, rps, row.get("turnover_pct"), formula_config,
                     )
                     is_match = False
                 if not technical:
                     failures += 1
                     base_rows.append(row)
                     continue
-                technical_date = str(bars[-1].get("datetime") or "")[:10] or None
+                technical_date = str(eval_bars[-1].get("datetime") or "")[:10] or None
                 technical["technical_date"] = technical_date
                 row.update(technical)
+                _compute_3l_metrics(eval_bars, row)
+                if future_bars:
+                    _apply_forward_returns(row, future_bars)
 
                 if strategy == "growth_mrgc_sxhcg":
                     row.update({
@@ -1417,6 +1428,7 @@ def _run_screen_named_signals(
         "fund_period": base["fund_period"],
         "north_period": base["north_period"],
         "technical_date": latest_technical_date,
+        "as_of_date": as_of_date,
         "fund_candidate_count": base["fund_candidate_count"],
         "north_candidate_count": base["north_candidate_count"],
         "overlap_count": base["overlap_count"],
@@ -1430,6 +1442,7 @@ def _run_screen_named_signals(
         ),
         "base_rows": base_rows,
         "rows": matched,
+        "backtest_summary": _compute_backtest_summary(as_of_date, matched) if as_of_date else None,
     }
 
 
@@ -1472,6 +1485,181 @@ def _tdx_rps_for_bars(rps: dict | None, bars: list[dict]) -> dict | None:
         for key in result:
             result[key].append(_finite(point.get(key)))
     return result
+
+
+def _compute_3l_metrics(bars: list[dict], row: dict) -> None:
+    """计算 3L 交易体系相关量价择时与风控指标。
+
+    - 动量主线：RPS250/120/50 动量状态与新高印证
+    - 量价择时：生命线 MA20、均线趋势斜率、乖离率
+    - 风险控制：硬止损位（-8%）、紧止损位（-5%）、结构支撑（LLV 20）、盈亏比核算
+    - 回避模板：破生命线拐头向下、极度超买等回避预警
+    """
+    if not bars:
+        return
+    closes = _series(bars, "close")
+    highs = _series(bars, "high")
+    lows = _series(bars, "low")
+    if not closes:
+        return
+
+    close = row.get("close")
+    if close is None:
+        close = round(closes[-1], 3)
+        row["close"] = close
+    # 1. 生命线 MA20
+    ma20: float | None = None
+    ma20_slope: str | None = None
+    bias20_pct: float = 0.0
+    if len(closes) >= 20:
+        ma20 = round(sum(closes[-20:]) / 20.0, 2)
+        bias20_pct = round((close - ma20) / ma20 * 100.0, 2)
+        if len(closes) >= 23:
+            ma20_prev = sum(closes[-23:-3]) / 20.0
+            if ma20 > ma20_prev * 1.002:
+                ma20_slope = "up"
+            elif ma20 < ma20_prev * 0.998:
+                ma20_slope = "down"
+            else:
+                ma20_slope = "flat"
+        else:
+            ma20_slope = "up"
+
+    # 2. 止损点（6.4 止损点 & 6.5 止盈点）
+    stop_loss_hard_8 = round(close * 0.92, 2)
+    stop_loss_hard_5 = round(close * 0.95, 2)
+    key_support = round(min(lows[-min(20, len(lows)):]), 2) if lows else round(close * 0.92, 2)
+    target_price = round(max(highs[-min(120, len(highs)):]), 2) if highs else round(close * 1.2, 2)
+
+    # 3. 盈亏比核算（买前十问第 7 问：盈亏比是否达到 3:1）
+    potential_gain = max(0.0, target_price - close)
+    potential_loss = max(0.01, close - key_support)
+    risk_reward_ratio = round(potential_gain / potential_loss, 2)
+
+    # 4. 量价择时与回避评估（6.2 关键点 / 6.7 回避模板）
+    period_high = max(highs[-min(250, len(highs)):]) if highs else close
+    risk_tags: list[str] = []
+
+    if ma20 is not None and close < ma20 and ma20_slope == "down":
+        timing_status = "破位回避"
+        timing_score = 30
+        risk_tags.append("破20日线")
+    elif bias20_pct > 18.0:
+        timing_status = "乖离过大"
+        timing_score = 55
+        risk_tags.append("超买乖离")
+    elif ma20 is not None and 0 <= bias20_pct <= 5.0 and ma20_slope == "up":
+        timing_status = "均线低吸点"
+        timing_score = 95
+    elif close >= period_high * 0.98:
+        timing_status = "关键点突破"
+        timing_score = 90
+    elif ma20_slope == "up":
+        timing_status = "主升通道"
+        timing_score = 80
+    else:
+        timing_status = "震荡整理"
+        timing_score = 65
+
+    # 动量与风控预警
+    rps250 = _finite(row.get("rps250"))
+    rps120 = _finite(row.get("rps120"))
+    if (rps250 is not None and rps250 < 85) and (rps120 is not None and rps120 < 85):
+        risk_tags.append("动量弱化")
+    if risk_reward_ratio < 2.0:
+        risk_tags.append("盈亏比偏低")
+    turnover = _finite(row.get("turnover_pct"))
+    if turnover is not None and turnover > 20:
+        risk_tags.append("高换手分歧")
+
+    row.update({
+        "ma20": ma20,
+        "ma20_slope": ma20_slope,
+        "bias20_pct": bias20_pct,
+        "stop_loss_hard_8": stop_loss_hard_8,
+        "stop_loss_hard_5": stop_loss_hard_5,
+        "key_support": key_support,
+        "target_price": target_price,
+        "risk_reward_ratio": risk_reward_ratio,
+        "timing_status": timing_status,
+        "timing_score": timing_score,
+        "risk_tags": risk_tags,
+    })
+
+
+def _apply_forward_returns(row: dict, future_bars: list[dict]) -> None:
+    """计算选股后的未来持仓表现（用于历史回测与胜率统计）。"""
+    if not future_bars:
+        return
+    close_0 = row.get("close")
+    if close_0 is None or close_0 <= 0:
+        return
+
+    if len(future_bars) >= 5:
+        row["return_5d"] = round((future_bars[4]["close"] / close_0 - 1) * 100, 2)
+    if len(future_bars) >= 10:
+        row["return_10d"] = round((future_bars[9]["close"] / close_0 - 1) * 100, 2)
+    if len(future_bars) >= 20:
+        row["return_20d"] = round((future_bars[19]["close"] / close_0 - 1) * 100, 2)
+        future_20 = future_bars[:20]
+        row["max_gain_20d"] = round((max(b["high"] for b in future_20) / close_0 - 1) * 100, 2)
+        row["max_dd_20d"] = round((min(b["low"] for b in future_20) / close_0 - 1) * 100, 2)
+    if len(future_bars) >= 60:
+        row["return_60d"] = round((future_bars[59]["close"] / close_0 - 1) * 100, 2)
+
+
+def _compute_backtest_summary(as_of_date: str, matched_rows: list[dict]) -> dict | None:
+    """聚合历史回测胜率、平均收益率与盈亏比。"""
+    if not matched_rows:
+        return None
+    r5 = [r["return_5d"] for r in matched_rows if r.get("return_5d") is not None]
+    r10 = [r["return_10d"] for r in matched_rows if r.get("return_10d") is not None]
+    r20 = [r["return_20d"] for r in matched_rows if r.get("return_20d") is not None]
+    r60 = [r["return_60d"] for r in matched_rows if r.get("return_60d") is not None]
+    g20 = [r["max_gain_20d"] for r in matched_rows if r.get("max_gain_20d") is not None]
+    d20 = [r["max_dd_20d"] for r in matched_rows if r.get("max_dd_20d") is not None]
+
+    if not r5 and not r20:
+        return None
+
+    def _win_rate(arr: list[float]) -> float | None:
+        if not arr:
+            return None
+        return round(sum(1 for x in arr if x > 0) / len(arr) * 100, 1)
+
+    def _avg(arr: list[float]) -> float | None:
+        if not arr:
+            return None
+        return round(sum(arr) / len(arr), 2)
+
+    def _median(arr: list[float]) -> float | None:
+        if not arr:
+            return None
+        s = sorted(arr)
+        n = len(s)
+        return round(s[n // 2] if n % 2 != 0 else (s[n // 2 - 1] + s[n // 2]) / 2, 2)
+
+    pos_20 = [x for x in r20 if x > 0]
+    neg_20 = [abs(x) for x in r20 if x < 0]
+    avg_win = sum(pos_20) / len(pos_20) if pos_20 else 0
+    avg_loss = sum(neg_20) / len(neg_20) if neg_20 else 0
+    pl_ratio_20 = round(avg_win / avg_loss, 2) if avg_loss > 0 else (round(avg_win, 2) if avg_win > 0 else None)
+
+    return {
+        "as_of_date": as_of_date,
+        "sample_count": len(matched_rows),
+        "win_rate_5d": _win_rate(r5),
+        "avg_return_5d": _avg(r5),
+        "win_rate_10d": _win_rate(r10),
+        "avg_return_10d": _avg(r10),
+        "win_rate_20d": _win_rate(r20),
+        "avg_return_20d": _avg(r20),
+        "win_rate_60d": _win_rate(r60),
+        "avg_return_60d": _avg(r60),
+        "profit_loss_ratio_20d": pl_ratio_20,
+        "max_gain_median_20d": _median(g20),
+        "max_dd_median_20d": _median(d20),
+    }
 
 
 def _tdx_apply_evaluation(row: dict, bars: list[dict], evaluation: dict) -> None:
@@ -1521,6 +1709,7 @@ def _run_screen_tdx(
     fund_period: str | None,
     strategy: str,
     formula_source: str | None,
+    as_of_date: str | None = None,
     progress_cb=None,
 ) -> dict:
     """执行通达信版量化筛选。
@@ -1645,14 +1834,30 @@ def _run_screen_tdx(
                 _emit("bars", done_bars, total_bars, f"日 K {done_bars}/{total_bars}")
             try:
                 bars = future.result()
-                if len(bars) < minimum_history:
+                if as_of_date:
+                    eval_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] <= as_of_date]
+                    future_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] > as_of_date]
+                else:
+                    eval_bars = bars
+                    future_bars = []
+
+                if len(eval_bars) < minimum_history:
                     raise tdx_formula.TdxFormulaEvaluationError(
-                        f"K线不足：至少需要{minimum_history}日，实际{len(bars)}日",
+                        f"K线不足：至少需要{minimum_history}日，实际{len(eval_bars)}日",
                         code="insufficient_history",
                     )
-                capital = _tdx_capital_from_turnover(bars, row.get("turnover_pct")) if uses_capital else None
-                eval_bars = _tdx_evaluation_bars(bars)
-                formula_rps = _tdx_rps_for_bars(rps, bars)
+                capital = _tdx_capital_from_turnover(eval_bars, row.get("turnover_pct")) if uses_capital else None
+                eval_bars_obj = _tdx_evaluation_bars(eval_bars)
+                formula_rps = _tdx_rps_for_bars(rps, eval_bars)
+                if as_of_date and rps:
+                    eval_trade_date = str(eval_bars[-1].get("datetime") or eval_bars[-1].get("date") or "")[:10]
+                    history_map = {str(pt.get("trade_date") or ""): pt for pt in rps.get("history", [])}
+                    pt = history_map.get(eval_trade_date) or history_map.get(as_of_date)
+                    if pt:
+                        for p in _RPS_PERIODS:
+                            if f"rps{p}" in pt:
+                                row[f"rps{p}"] = pt[f"rps{p}"]
+
                 if uses_capital and capital is None:
                     raise tdx_formula.TdxFormulaEvaluationError(
                         "公式使用 CAPITAL，但无法取得最新换手率/成交量",
@@ -1663,13 +1868,16 @@ def _run_screen_tdx(
                     # 用户给出的增长公式均为 FINANCE(43/44) 大于阈值。先用极大值
                     # 执行完整技术部分，只对可能命中的股票请求较慢的逐股财务源。
                     probe = program.evaluate(
-                        eval_bars,
+                        eval_bars_obj,
                         rps=formula_rps,
                         financial={"43": 1_000_000_000, "44": 1_000_000_000},
                         code=row["code"],
                         capital=capital,
                     )
-                    _tdx_apply_evaluation(row, bars, probe)
+                    _tdx_apply_evaluation(row, eval_bars, probe)
+                    _compute_3l_metrics(eval_bars, row)
+                    if future_bars:
+                        _apply_forward_returns(row, future_bars)
                     row.update({
                         "matched": False,
                         "financial_period": None,
@@ -1677,12 +1885,15 @@ def _run_screen_tdx(
                         "net_profit_yoy_pct": None,
                     })
                     if probe["matched"]:
-                        financial_candidates.append((row, bars, rps, capital))
+                        financial_candidates.append((row, eval_bars, rps, capital, future_bars))
                 else:
                     evaluation = program.evaluate(
-                        eval_bars, rps=formula_rps, code=row["code"], capital=capital,
+                        eval_bars_obj, rps=formula_rps, code=row["code"], capital=capital,
                     )
-                    _tdx_apply_evaluation(row, bars, evaluation)
+                    _tdx_apply_evaluation(row, eval_bars, evaluation)
+                    _compute_3l_metrics(eval_bars, row)
+                    if future_bars:
+                        _apply_forward_returns(row, future_bars)
                     if evaluation["matched"]:
                         matched.append(dict(row))
 
@@ -1702,11 +1913,11 @@ def _run_screen_tdx(
         finance_workers = min(6, len(financial_candidates))
         with ThreadPoolExecutor(max_workers=finance_workers) as executor:
             futures = {
-                executor.submit(_financial_growth, row["code"]): (row, bars, rps, capital)
-                for row, bars, rps, capital in financial_candidates
+                executor.submit(_financial_growth, row["code"]): (row, eval_bars, rps, capital, future_bars)
+                for row, eval_bars, rps, capital, future_bars in financial_candidates
             }
             for future in as_completed(futures):
-                row, bars, rps, capital = futures[future]
+                row, eval_bars, rps, capital, future_bars = futures[future]
                 done_finance += 1
                 if done_finance == total_finance or done_finance % max(1, total_finance // 20) == 0:
                     _emit("finance", done_finance, total_finance, f"财务 {done_finance}/{total_finance}")
@@ -1714,8 +1925,8 @@ def _run_screen_tdx(
                     financial = future.result()
                     row.update(financial)
                     evaluation = program.evaluate(
-                        _tdx_evaluation_bars(bars),
-                        rps=_tdx_rps_for_bars(rps, bars),
+                        _tdx_evaluation_bars(eval_bars),
+                        rps=_tdx_rps_for_bars(rps, eval_bars),
                         financial={
                             "43": financial.get("net_profit_yoy_pct"),
                             "44": financial.get("revenue_yoy_pct"),
@@ -1723,7 +1934,10 @@ def _run_screen_tdx(
                         code=row["code"],
                         capital=capital,
                     )
-                    _tdx_apply_evaluation(row, bars, evaluation)
+                    _tdx_apply_evaluation(row, eval_bars, evaluation)
+                    _compute_3l_metrics(eval_bars, row)
+                    if future_bars:
+                        _apply_forward_returns(row, future_bars)
                     if evaluation["matched"]:
                         matched.append(dict(row))
                 except Exception as error:  # noqa: BLE001
@@ -1777,6 +1991,7 @@ def _run_screen_tdx(
         "fund_period": base["fund_period"],
         "north_period": base["north_period"],
         "technical_date": latest_technical_date,
+        "as_of_date": as_of_date,
         "fund_candidate_count": base["fund_candidate_count"],
         "north_candidate_count": base["north_candidate_count"],
         "overlap_count": base["overlap_count"],
@@ -1790,6 +2005,7 @@ def _run_screen_tdx(
         ),
         "base_rows": base_rows,
         "rows": matched,
+        "backtest_summary": _compute_backtest_summary(as_of_date, matched) if as_of_date else None,
     }
 
 
@@ -1802,6 +2018,7 @@ def run_screen(
     strategy: str = "near_high",
     formula: dict | None = None,
     formula_source: str | None = None,
+    as_of_date: str | None = None,
     progress_cb=None,
 ) -> dict:
     """执行量化筛选。
@@ -1809,6 +2026,7 @@ def run_screen(
     ``formula_source`` 是当前页面使用的通达信兼容源码；旧版结构化 ``formula``
     仍保留兼容，避免已有调用方突然失效。
     ``progress_cb`` 是可选的进度回调，签名 ``progress_cb(phase, done, total, message)``。
+    ``as_of_date`` 可选历史日期（YYYY-MM-DD），用于历史选股回测与胜率统计。
     """
     if formula is not None and formula_source is None:
         return _run_screen_named_signals(
@@ -1819,6 +2037,7 @@ def run_screen(
             fund_period=fund_period,
             strategy=strategy,
             formula=formula,
+            as_of_date=as_of_date,
         )
     return _run_screen_tdx(
         fund_ratio_min=fund_ratio_min,
@@ -1826,5 +2045,6 @@ def run_screen(
         fund_period=fund_period,
         strategy=strategy,
         formula_source=formula_source,
+        as_of_date=as_of_date,
         progress_cb=progress_cb,
     )

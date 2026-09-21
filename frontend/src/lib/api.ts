@@ -454,6 +454,7 @@ export interface QuantScreenInput {
   lookback_days?: number;
   fund_period?: string | null;
   formula_source?: string;
+  as_of_date?: string | null;
 }
 export interface QuantRow {
   code: string; name: string; industry: string;
@@ -474,7 +475,45 @@ export interface QuantRow {
   mrgc?: boolean; sxhcg?: boolean;
   financial_period?: string | null;
   revenue_yoy_pct?: number | null; net_profit_yoy_pct?: number | null;
+
+  // ── 3L 交易体系指标 ──
+  ma20?: number | null;
+  ma20_slope?: "up" | "down" | "flat" | null;
+  bias20_pct?: number | null;
+  stop_loss_hard_8?: number | null;
+  stop_loss_hard_5?: number | null;
+  key_support?: number | null;
+  target_price?: number | null;
+  risk_reward_ratio?: number | null;
+  timing_status?: string | null;
+  timing_score?: number | null;
+  risk_tags?: string[];
+
+  // ── 历史回测指标（未来涨幅与回撤） ──
+  return_5d?: number | null;
+  return_10d?: number | null;
+  return_20d?: number | null;
+  return_60d?: number | null;
+  max_gain_20d?: number | null;
+  max_dd_20d?: number | null;
 }
+
+export interface BacktestSummary {
+  as_of_date: string;
+  sample_count: number;
+  win_rate_5d: number | null;
+  avg_return_5d: number | null;
+  win_rate_10d: number | null;
+  avg_return_10d: number | null;
+  win_rate_20d: number | null;
+  avg_return_20d: number | null;
+  win_rate_60d: number | null;
+  avg_return_60d: number | null;
+  profit_loss_ratio_20d: number | null;
+  max_gain_median_20d: number | null;
+  max_dd_median_20d: number | null;
+}
+
 export interface QuantScreenResult {
   strategy: QuantScreenInput["strategy"];
   strategy_label: string;
@@ -485,6 +524,7 @@ export interface QuantScreenResult {
     used_functions?: string[]; uses_rps?: boolean; uses_finance?: boolean; uses_capital?: boolean;
   };
   fund_period: string; north_period: string; technical_date: string | null;
+  as_of_date?: string | null;
   fund_candidate_count: number; north_candidate_count: number; overlap_count: number;
   base_count: number; matched_count: number;
   technical_failure_count: number; elapsed_seconds: number;
@@ -494,6 +534,7 @@ export interface QuantScreenResult {
     excluded_short_history_count: number; rule: string;
   };
   base_rows: QuantRow[]; rows: QuantRow[];
+  backtest_summary?: BacktestSummary | null;
 }
 
 // ── 通达信 blocknew 选股公式板块 ────────────────────────────────────────────

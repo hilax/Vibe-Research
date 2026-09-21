@@ -110,6 +110,7 @@ class QuantScreenReq(BaseModel):
     fund_period: str | None = Field(None, pattern=r"^\d{4}-(03-31|06-30|09-30|12-31)$")
     formula: dict[str, Any] | None = None
     formula_source: str | None = Field(None, max_length=100000)
+    as_of_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class QuantFormulaValidateReq(BaseModel):
