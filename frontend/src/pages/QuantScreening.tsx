@@ -630,7 +630,7 @@ export function QuantScreening() {
       <th
         onClick={() => toggleSort(k)}
         className={cn(
-          "whitespace-nowrap px-3 py-2.5 font-medium select-none cursor-pointer hover:text-foreground transition-colors",
+          "whitespace-nowrap px-3 py-2.5 font-medium select-none cursor-pointer hover:text-foreground transition-colors bg-card/95 backdrop-blur",
           align === "right" && "text-right",
         )}
         title="点击排序"
@@ -1904,9 +1904,9 @@ export function QuantScreening() {
             ) : (
               <div className="max-h-[640px] overflow-auto">
                 <table className="w-full min-w-[1380px] text-sm">
-                  <thead className="sticky top-0 z-[10] bg-card/95 backdrop-blur border-b border-border/60">
+                  <thead className="sticky top-0 z-20 bg-card/95 backdrop-blur border-b border-border/60">
                     <tr className="text-left text-[11px] text-muted-foreground">
-                      <th className="sticky left-0 z-20 bg-card/95 backdrop-blur whitespace-nowrap px-4 py-2.5 font-medium shadow-[2px_0_6px_rgba(0,0,0,0.25)]">
+                      <th className="sticky left-0 z-30 bg-card/95 backdrop-blur whitespace-nowrap px-4 py-2.5 font-medium shadow-[2px_0_6px_rgba(0,0,0,0.25)]">
                         <button
                           type="button"
                           onClick={() => toggleSort("name")}
@@ -1958,8 +1958,8 @@ export function QuantScreening() {
                         </>
                       )}
                       <SortHead k="distance_to_high_pct" label="距新高" align="right" />
-                      <th className="whitespace-nowrap px-3 py-2.5 font-medium">K线日期</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-medium text-center">操作</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 font-medium bg-card/95 backdrop-blur">K线日期</th>
+                      <th className="whitespace-nowrap px-3 py-2.5 font-medium text-center bg-card/95 backdrop-blur">操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2030,7 +2030,7 @@ export function QuantScreening() {
                                     />
                                   )}
                                   <span className={cn(
-                                    "relative z-10",
+                                    "relative z-[1]",
                                     val != null && val >= 95
                                       ? "text-market-up font-bold"
                                       : val != null && val >= 90
