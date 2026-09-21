@@ -23,20 +23,61 @@ import { addCodes, loadWatch, saveWatch } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-// ── 跨路由保留最近一次筛选结果 ─────────────────────────────────────
-// 列表行点击会跳到 /stock-kline/:code，按浏览器返回时 React Router 会重新挂载
-// /quant-screening，整个组件的 useState 回到初始值，结果就消失了。
-// 这里用 module-level cache 把上一次的「输入 + 结果 + 当前 tab」缓存下来，
-// 组件 mount 时优先从 cache 恢复（不是 localStorage，避免跨会话显示陈旧数据）。
-type CachedSnapshot = {
+// ── 跨会话/跨路由持久化筛选结果 ─────────────────────────────────────
+// 避免因切换浏览器标签页、后台休眠重载、路由跳转或刷新页面导致已选标的消失。
+const LAST_SCREEN_SNAPSHOT_KEY = "vr-quant-screen-snapshot-v2";
+
+interface PersistentSnapshot {
   input: import("@/lib/api").QuantScreenInput;
   result: import("@/lib/api").QuantScreenResult;
   view: "matched" | "base";
   selectedKey: string;
   fundRatioMin: number;
   northValueMin: number;
-};
-let _cachedSnapshot: CachedSnapshot | null = null;
+  screenMode: "live" | "backtest";
+  asOfDate: string;
+  savedAt: number;
+}
+
+let _cachedSnapshot: PersistentSnapshot | null = null;
+
+function readPersistentSnapshot(): PersistentSnapshot | null {
+  if (_cachedSnapshot) return _cachedSnapshot;
+  try {
+    const raw = localStorage.getItem(LAST_SCREEN_SNAPSHOT_KEY) || sessionStorage.getItem(LAST_SCREEN_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const data: PersistentSnapshot = JSON.parse(raw);
+    // 72 小时内有效（防过期陈旧数据，同时保证跨日与休眠完全保留）
+    if (Date.now() - data.savedAt > 72 * 3600 * 1000) {
+      localStorage.removeItem(LAST_SCREEN_SNAPSHOT_KEY);
+      sessionStorage.removeItem(LAST_SCREEN_SNAPSHOT_KEY);
+      return null;
+    }
+    _cachedSnapshot = data;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistentSnapshot(snapshot: PersistentSnapshot | null) {
+  _cachedSnapshot = snapshot;
+  try {
+    if (snapshot) {
+      const serialized = JSON.stringify(snapshot);
+      try {
+        localStorage.setItem(LAST_SCREEN_SNAPSHOT_KEY, serialized);
+      } catch {
+        sessionStorage.setItem(LAST_SCREEN_SNAPSHOT_KEY, serialized);
+      }
+    } else {
+      localStorage.removeItem(LAST_SCREEN_SNAPSHOT_KEY);
+      sessionStorage.removeItem(LAST_SCREEN_SNAPSHOT_KEY);
+    }
+  } catch {
+    /* 忽略存储异常 */
+  }
+}
 
 // ── 阶段文案 + 顺序权重（用于"总体进度条"）──────────────────────────────────
 const PHASE_LABEL: Record<string, string> = {
@@ -303,14 +344,15 @@ function ConditionInput({
 }
 
 export function QuantScreening() {
-  // 筛选参数（默认从 module-level cache 取，保持跨路由返回时不丢筛选上下文）
-  const [fundRatioMin, setFundRatioMin] = useState(_cachedSnapshot?.fundRatioMin ?? 5);
-  const [northValueMin, setNorthValueMin] = useState(_cachedSnapshot?.northValueMin ?? 1);
-  const [selectedKey, setSelectedKey] = useState<string>(_cachedSnapshot?.selectedKey ?? "near_high");
+  const initialSnapshot = useMemo(() => readPersistentSnapshot(), []);
+  // 筛选参数（优先从持久化快照恢复）
+  const [fundRatioMin, setFundRatioMin] = useState(initialSnapshot?.fundRatioMin ?? 5);
+  const [northValueMin, setNorthValueMin] = useState(initialSnapshot?.northValueMin ?? 1);
+  const [selectedKey, setSelectedKey] = useState<string>(initialSnapshot?.selectedKey ?? "near_high");
 
   // 运行状态
-  const [result, setResult] = useState<QuantScreenResult | null>(_cachedSnapshot?.result ?? null);
-  const [view, setView] = useState<"matched" | "base">(_cachedSnapshot?.view ?? "matched");
+  const [result, setResult] = useState<QuantScreenResult | null>(initialSnapshot?.result ?? null);
+  const [view, setView] = useState<"matched" | "base">(initialSnapshot?.view ?? "matched");
   const [loading, setLoading] = useState(false);
   const [formulaLoading, setFormulaLoading] = useState(true);
   const [validating, setValidating] = useState(false);
@@ -350,9 +392,9 @@ export function QuantScreening() {
   const [tableSearch, setTableSearch] = useState("");
   const [tableFilter, setTableFilter] = useState<"all" | "up" | "high_rps" | "unwatched">("all");
 
-  // ── 模式与回测参数 ──
-  const [screenMode, setScreenMode] = useState<"live" | "backtest">("live");
-  const [asOfDate, setAsOfDate] = useState<string>("");
+  // ── 模式与回测参数（从持久化快照恢复） ──
+  const [screenMode, setScreenMode] = useState<"live" | "backtest">(initialSnapshot?.screenMode ?? "live");
+  const [asOfDate, setAsOfDate] = useState<string>(initialSnapshot?.asOfDate ?? "");
 
   // ── 3L 买前十问弹窗状态 ──
   const [checklistStock, setChecklistStock] = useState<QuantRow | null>(null);
@@ -618,7 +660,6 @@ export function QuantScreening() {
   const updateFormulaSource = (source: string) => {
     setDrafts((cur) => ({ ...cur, [selectedKey]: source }));
     setValidation({ status: "idle" });
-    setResult(null);
   };
 
   const validateFormula = async () => {
@@ -705,19 +746,23 @@ export function QuantScreening() {
       setView("matched");
       // 把这次成功的「输入 + 结果 + 当前 tab」存到 module-level cache，
       // 这样点行进 K 线页、再按浏览器返回时，结果不会丢。
-      _cachedSnapshot = {
+      savePersistentSnapshot({
         input: {
           strategy: selected.baseStrategy,
           fund_ratio_min: fundRatioMin,
           north_value_min_yi: northValueMin,
           formula_source: checked.normalized_source,
+          as_of_date: screenMode === "backtest" && asOfDate ? asOfDate : undefined,
         },
         result: data,
         view: "matched",
         selectedKey,
         fundRatioMin,
         northValueMin,
-      };
+        screenMode,
+        asOfDate,
+        savedAt: Date.now(),
+      });
       setProgressPhase(null);
       setProgressMessage("");
       setProgressDone(0);
@@ -792,12 +837,13 @@ export function QuantScreening() {
   };
 
   const handleSelectStrategy = (key: string) => {
+    if (key === selectedKey) return; // 点击已经选中的卡片，绝对不要清空数据！
     setSelectedKey(key);
     setValidation({ status: "idle" });
     setResult(null);
     setView("matched");
     setShowEditor(false);
-    _cachedSnapshot = null;
+    savePersistentSnapshot(null);
   };
 
   const handleAddStrategy = () => {
@@ -884,13 +930,28 @@ export function QuantScreening() {
           title="量化选股"
           subtitle="机构持仓（基金/北向）构建基础池，叠加通达信技术公式二次筛选。"
           actions={result && (
-            <button
-              onClick={run}
-              disabled={loading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} /> 重新筛选
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setResult(null);
+                  savePersistentSnapshot(null);
+                  toast.info("已清空当前筛选结果");
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                title="清空当前结果"
+              >
+                <X className="h-3.5 w-3.5" /> 清空结果
+              </button>
+              <button
+                type="button"
+                onClick={run}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} /> 重新筛选
+              </button>
+            </div>
           )}
         />
         <RpsStatusPill
@@ -1282,7 +1343,7 @@ export function QuantScreening() {
               <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
                 <button
                   type="button"
-                  onClick={() => { setScreenMode("live"); setAsOfDate(""); setResult(null); }}
+                  onClick={() => { setScreenMode("live"); setAsOfDate(""); }}
                   className={cn(
                     "rounded-md px-3 py-1 font-medium transition-all",
                     screenMode === "live" ? "bg-primary/20 text-primary font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground"
@@ -1294,7 +1355,6 @@ export function QuantScreening() {
                   type="button"
                   onClick={() => {
                     setScreenMode("backtest");
-                    setResult(null);
                     if (!asOfDate) {
                       const d = new Date();
                       d.setDate(d.getDate() - 30);
@@ -1316,7 +1376,7 @@ export function QuantScreening() {
                   <input
                     type="date"
                     value={asOfDate}
-                    onChange={(e) => { setAsOfDate(e.target.value); setResult(null); }}
+                    onChange={(e) => { setAsOfDate(e.target.value); }}
                     className="rounded-lg border border-border/60 bg-black/40 px-2.5 py-1 text-xs font-mono outline-none focus:border-primary/50"
                   />
                   {[
@@ -1333,7 +1393,6 @@ export function QuantScreening() {
                         const d = new Date();
                         d.setDate(d.getDate() - item.days);
                         setAsOfDate(d.toISOString().slice(0, 10));
-                        setResult(null);
                       }}
                       className="rounded border border-border/50 bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40"
                     >
@@ -1370,7 +1429,7 @@ export function QuantScreening() {
                     <button
                       key={val}
                       type="button"
-                      onClick={() => { setFundRatioMin(val); setResult(null); }}
+                      onClick={() => { setFundRatioMin(val); }}
                       className={cn(
                         "rounded px-2 py-0.5 font-mono text-xs transition-colors",
                         fundRatioMin === val
@@ -1388,7 +1447,7 @@ export function QuantScreening() {
                     <button
                       key={val}
                       type="button"
-                      onClick={() => { setNorthValueMin(val); setResult(null); }}
+                      onClick={() => { setNorthValueMin(val); }}
                       className={cn(
                         "rounded px-2 py-0.5 font-mono text-xs transition-colors",
                         northValueMin === val
@@ -1411,7 +1470,7 @@ export function QuantScreening() {
                     min={0.1}
                     max={100}
                     step={0.5}
-                    onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); setResult(null); }}
+                    onChange={(v) => { setFundRatioMin(Number.isFinite(v) ? v : 0); }}
                   />
                   <ConditionInput
                     label="北向持股市值 ≥"
@@ -1420,7 +1479,7 @@ export function QuantScreening() {
                     min={0}
                     max={100000}
                     step={0.5}
-                    onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); setResult(null); }}
+                    onChange={(v) => { setNorthValueMin(Number.isFinite(v) ? v : 0); }}
                   />
                 </div>
               )}
@@ -1726,7 +1785,12 @@ export function QuantScreening() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
                   <button
-                    onClick={() => { setView("matched"); if (_cachedSnapshot) _cachedSnapshot.view = "matched"; }}
+                    onClick={() => {
+                      setView("matched");
+                      if (_cachedSnapshot) {
+                        savePersistentSnapshot({ ..._cachedSnapshot, view: "matched" });
+                      }
+                    }}
                     className={cn(
                       "flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition-all",
                       view === "matched" ? "bg-primary text-primary-foreground font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground"
@@ -1741,7 +1805,12 @@ export function QuantScreening() {
                     </span>
                   </button>
                   <button
-                    onClick={() => { setView("base"); if (_cachedSnapshot) _cachedSnapshot.view = "base"; }}
+                    onClick={() => {
+                      setView("base");
+                      if (_cachedSnapshot) {
+                        savePersistentSnapshot({ ..._cachedSnapshot, view: "base" });
+                      }
+                    }}
                     className={cn(
                       "flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition-all",
                       view === "base" ? "bg-primary text-primary-foreground font-semibold shadow-sm" : "text-muted-foreground hover:text-foreground"
