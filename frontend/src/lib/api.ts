@@ -490,6 +490,11 @@ export interface QuantRow {
   risk_tags?: string[];
 
   // ── 历史回测指标（未来涨幅与回撤） ──
+  current_price?: number | null;
+  current_change_pct?: number | null;
+  total_return_pct?: number | null;
+  open?: number | null;
+  pre_close?: number | null;
   return_5d?: number | null;
   return_10d?: number | null;
   return_20d?: number | null;

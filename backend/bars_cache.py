@@ -85,17 +85,32 @@ def _is_valid_cache(
     if count < min_bars:
         return False
 
+    now = time.time()
+    today_str = time.strftime("%Y-%m-%d")
+
+    # 如果缓存记录包含今天的日期（当天数据在交易时段或收盘前后会动态变动）：
+    if latest_date == today_str:
+        curr_hm = time.strftime("%H:%M")
+        update_hm = time.strftime("%H:%M", time.localtime(updated_at))
+        update_date = time.strftime("%Y-%m-%d", time.localtime(updated_at))
+        # 1) 如果当前已过收盘时间（15:05），而缓存是在收盘前（15:05 之前）写入的，需重新拉取收盘K线
+        if curr_hm >= "15:05" and (update_date < today_str or update_hm < "15:05"):
+            return False
+        # 2) 如果在盘中交易时段（09:30 ~ 15:00），且缓存已超过 5 分钟，需拉取最新价格
+        if "09:30" <= curr_hm <= "15:00" and (now - updated_at > 300):
+            return False
+
     if target_date:
         if latest_date >= target_date:
             return True
         # 若最新日期早于 target_date，但本次更新发生在近 8 小时内，
         # 说明该股在 target_date 为停牌/未交易状态，通达信返回的就是此最新数据，无需反复重下。
-        if time.time() - updated_at < 8 * 3600:
+        if now - updated_at < 8 * 3600:
             return True
         return False
 
     # 未指定 target_date 时，24 小时内的数据均有效
-    return (time.time() - updated_at) < 24 * 3600
+    return (now - updated_at) < 24 * 3600
 
 
 # ── 读写接口 ─────────────────────────────────────────────────────────────

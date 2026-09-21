@@ -515,6 +515,8 @@ def base_pool(
         for r in rows:
             q = quotes.get(r["code"]) or {}
             r["change_pct"] = q.get("change_pct")
+            r["current_price"] = q.get("price")
+            r["current_change_pct"] = q.get("change_pct")
     rows.sort(key=lambda row: (
         -(int(row["fund_condition_met"]) + int(row["north_condition_met"])),
         -(row["fund_float_ratio_pct"] or 0),
@@ -1301,6 +1303,7 @@ def _run_screen_named_signals(
                 technical_date = str(eval_bars[-1].get("datetime") or "")[:10] or None
                 technical["technical_date"] = technical_date
                 row.update(technical)
+                _calibrate_as_of_date_row(row, eval_bars, bars, as_of_date)
                 _compute_3l_metrics(eval_bars, row)
                 if future_bars:
                     _apply_forward_returns(row, future_bars)
@@ -1587,6 +1590,25 @@ def _compute_3l_metrics(bars: list[dict], row: dict) -> None:
     })
 
 
+def _calibrate_as_of_date_row(
+    row: dict, eval_bars: list[dict], all_bars: list[dict], as_of_date: str | None,
+) -> None:
+    """在历史回测模式下，将当日价格、当日涨跌幅及最新现价与至今涨幅校准准确。"""
+    if not as_of_date or not eval_bars:
+        return
+    close_val = round(eval_bars[-1]["close"], 2)
+    row["close"] = close_val
+    row["open"] = round(eval_bars[-1].get("open") or close_val, 2)
+    if len(eval_bars) >= 2:
+        pre_close = round(eval_bars[-2]["close"], 2)
+        row["pre_close"] = pre_close
+        row["change_pct"] = round((close_val / pre_close - 1) * 100, 2)
+    current_price = row.get("current_price") or (all_bars[-1].get("close") if all_bars else None)
+    if current_price and close_val > 0:
+        row["current_price"] = round(current_price, 2)
+        row["total_return_pct"] = round((current_price / close_val - 1) * 100, 2)
+
+
 def _apply_forward_returns(row: dict, future_bars: list[dict]) -> None:
     """计算选股后的未来持仓表现（用于历史回测与胜率统计）。"""
     if not future_bars:
@@ -1595,17 +1617,39 @@ def _apply_forward_returns(row: dict, future_bars: list[dict]) -> None:
     if close_0 is None or close_0 <= 0:
         return
 
-    if len(future_bars) >= 5:
-        row["return_5d"] = round((future_bars[4]["close"] / close_0 - 1) * 100, 2)
-    if len(future_bars) >= 10:
-        row["return_10d"] = round((future_bars[9]["close"] / close_0 - 1) * 100, 2)
-    if len(future_bars) >= 20:
-        row["return_20d"] = round((future_bars[19]["close"] / close_0 - 1) * 100, 2)
-        future_20 = future_bars[:20]
+    current_price = row.get("current_price")
+    today_str = time.strftime("%Y-%m-%d")
+
+    # 如果未来最后一根K线是今天，校准其收盘价为当前实时最新价，消除早盘占位符误差
+    f_bars = []
+    for b in future_bars:
+        item = dict(b)
+        b_date = str(b.get("datetime") or b.get("date") or "")[:10]
+        if b_date == today_str and current_price and current_price > 0:
+            item["close"] = current_price
+            item["high"] = max(item.get("high") or current_price, current_price)
+            item["low"] = min(item.get("low") or current_price, current_price)
+        f_bars.append(item)
+
+    if len(f_bars) >= 5:
+        row["return_5d"] = round((f_bars[4]["close"] / close_0 - 1) * 100, 2)
+    elif len(f_bars) > 0:
+        # 若距今交易日不足5日，提供最新可用阶段涨幅
+        row["return_5d"] = round((f_bars[-1]["close"] / close_0 - 1) * 100, 2)
+
+    if len(f_bars) >= 10:
+        row["return_10d"] = round((f_bars[9]["close"] / close_0 - 1) * 100, 2)
+    if len(f_bars) >= 20:
+        row["return_20d"] = round((f_bars[19]["close"] / close_0 - 1) * 100, 2)
+        future_20 = f_bars[:20]
         row["max_gain_20d"] = round((max(b["high"] for b in future_20) / close_0 - 1) * 100, 2)
         row["max_dd_20d"] = round((min(b["low"] for b in future_20) / close_0 - 1) * 100, 2)
-    if len(future_bars) >= 60:
-        row["return_60d"] = round((future_bars[59]["close"] / close_0 - 1) * 100, 2)
+    elif len(f_bars) > 0:
+        row["max_gain_20d"] = round((max(b["high"] for b in f_bars) / close_0 - 1) * 100, 2)
+        row["max_dd_20d"] = round((min(b["low"] for b in f_bars) / close_0 - 1) * 100, 2)
+
+    if len(f_bars) >= 60:
+        row["return_60d"] = round((f_bars[59]["close"] / close_0 - 1) * 100, 2)
 
 
 def _compute_backtest_summary(as_of_date: str, matched_rows: list[dict]) -> dict | None:
@@ -1875,6 +1919,7 @@ def _run_screen_tdx(
                         capital=capital,
                     )
                     _tdx_apply_evaluation(row, eval_bars, probe)
+                    _calibrate_as_of_date_row(row, eval_bars, bars, as_of_date)
                     _compute_3l_metrics(eval_bars, row)
                     if future_bars:
                         _apply_forward_returns(row, future_bars)
@@ -1891,6 +1936,7 @@ def _run_screen_tdx(
                         eval_bars_obj, rps=formula_rps, code=row["code"], capital=capital,
                     )
                     _tdx_apply_evaluation(row, eval_bars, evaluation)
+                    _calibrate_as_of_date_row(row, eval_bars, bars, as_of_date)
                     _compute_3l_metrics(eval_bars, row)
                     if future_bars:
                         _apply_forward_returns(row, future_bars)
@@ -1935,6 +1981,7 @@ def _run_screen_tdx(
                         capital=capital,
                     )
                     _tdx_apply_evaluation(row, eval_bars, evaluation)
+                    _calibrate_as_of_date_row(row, eval_bars, bars, as_of_date)
                     _compute_3l_metrics(eval_bars, row)
                     if future_bars:
                         _apply_forward_returns(row, future_bars)

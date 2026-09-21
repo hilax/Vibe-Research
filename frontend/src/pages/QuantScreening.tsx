@@ -597,7 +597,8 @@ export function QuantScreening() {
     | "close" | "year_high" | "distance_to_high_pct"
     | "change_pct"
     | "ma20" | "key_support" | "risk_reward_ratio" | "timing_score"
-    | "return_5d" | "return_10d" | "return_20d" | "return_60d" | "max_gain_20d" | "max_dd_20d";
+    | "return_5d" | "return_10d" | "return_20d" | "return_60d" | "max_gain_20d" | "max_dd_20d"
+    | "current_price" | "total_return_pct";
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const toggleSort = (key: SortKey) => {
@@ -1921,7 +1922,11 @@ export function QuantScreening() {
                           )}
                         </button>
                       </th>
-                      <SortHead k="change_pct" label="今日涨跌" align="right" />
+                      <SortHead
+                        k="change_pct"
+                        label={result.as_of_date ? `选股日涨跌 (${result.as_of_date.slice(5)})` : "今日涨跌"}
+                        align="right"
+                      />
                       <SortHead k="industry" label="行业" />
                       <SortHead k="fund_float_ratio_pct" label="基金占流通" align="right" />
                       <SortHead k="fund_count" label="基金家数" align="right" />
@@ -1943,7 +1948,17 @@ export function QuantScreening() {
                           <SortHead k="net_profit_yoy_pct" label="净利同比" align="right" />
                         </>
                       )}
-                      <SortHead k="close" label="最新收盘" align="right" />
+                      <SortHead
+                        k="close"
+                        label={result.as_of_date ? `选股日收盘 (${result.as_of_date.slice(5)})` : "最新收盘"}
+                        align="right"
+                      />
+                      {result.as_of_date && (
+                        <>
+                          <SortHead k="current_price" label="当前现价" align="right" />
+                          <SortHead k="total_return_pct" label="至今涨跌" align="right" />
+                        </>
+                      )}
                       <SortHead k="timing_score" label="3L择时/形态" />
                       <SortHead k="ma20" label="生命线MA20" align="right" />
                       <SortHead k="key_support" label="支撑/止损" align="right" />
@@ -2062,10 +2077,29 @@ export function QuantScreening() {
                           </>
                         )}
 
-                        {/* 最新收盘 */}
+                        {/* 选股日收盘 */}
                         <td className="px-3 py-2.5 text-right font-mono font-num font-medium">
                           {numberText(row.close, 2)}
                         </td>
+
+                        {/* 回测模式下显示当前最新价与至今涨跌 */}
+                        {result.as_of_date && (
+                          <>
+                            <td className="px-3 py-2.5 text-right font-mono font-num text-foreground/90 font-medium">
+                              {numberText(row.current_price, 2)}
+                            </td>
+                            <td className={cn(
+                              "px-3 py-2.5 text-right font-mono font-num font-semibold",
+                              row.total_return_pct == null ? "text-muted-foreground" :
+                              row.total_return_pct > 0 ? "text-market-up" :
+                              row.total_return_pct < 0 ? "text-market-down" : "text-muted-foreground"
+                            )}>
+                              {row.total_return_pct != null
+                                ? `${row.total_return_pct > 0 ? "+" : ""}${row.total_return_pct}%`
+                                : "—"}
+                            </td>
+                          </>
+                        )}
 
                         {/* 3L 择时评估与买前十问入口 */}
                         <td className="whitespace-nowrap px-3 py-2.5">
@@ -2270,12 +2304,20 @@ export function QuantScreening() {
             {/* 关键数据摘要药丸 */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 border-b border-border/40 bg-black/20 p-3 text-xs">
               <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
-                <div className="text-[10px] text-muted-foreground">最新收盘</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {result?.as_of_date ? `选股日收盘 (${result.as_of_date.slice(5)})` : "最新收盘"}
+                </div>
                 <div className="mt-0.5 font-mono font-bold font-num text-foreground">{checklistStock.close}</div>
+                {result?.as_of_date && checklistStock.current_price && (
+                  <div className="text-[9px] text-primary font-mono mt-0.5">现价 {checklistStock.current_price}</div>
+                )}
               </div>
               <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">生命线 MA20</div>
                 <div className="mt-0.5 font-mono font-bold font-num text-sky-400">{checklistStock.ma20 ?? "—"}</div>
+                {checklistStock.bias20_pct != null && (
+                  <div className="text-[9px] text-muted-foreground font-mono mt-0.5">乖离 {checklistStock.bias20_pct}%</div>
+                )}
               </div>
               <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">硬止损(-8%)</div>
