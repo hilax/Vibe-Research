@@ -116,9 +116,9 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       />
 
       {/* Dialog */}
-      <div className="relative z-10 w-full max-w-xl mx-4 overflow-hidden rounded-2xl border border-white/10 bg-[#0f131a] shadow-2xl shadow-black/80">
+      <div className="relative z-10 w-full max-w-xl mx-4 overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl shadow-black/20 dark:border-white/10 dark:bg-[#0f131a] dark:shadow-black/80">
         {/* Search Input Bar */}
-        <div className="flex items-center gap-3 border-b border-white/10 px-4 py-3.5">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3.5 dark:border-white/10">
           <Search className="h-5 w-5 text-muted-foreground shrink-0" />
           <input
             ref={inputRef}
@@ -137,7 +137,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
               <X className="h-4 w-4" />
             </button>
           )}
-          <kbd className="hidden sm:inline-block rounded border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+          <kbd className="hidden sm:inline-block rounded border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-mono text-muted-foreground dark:border-white/15 dark:bg-white/5">
             ESC
           </kbd>
         </div>
@@ -146,7 +146,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         <div className="max-h-80 overflow-y-auto p-2 space-y-1">
           {/* If stock code, show direct jumps */}
           {isStockCode && (
-            <div className="mb-2 pb-2 border-b border-white/10">
+            <div className="mb-2 pb-2 border-b border-border dark:border-white/10">
               <div className="px-2 py-1 text-[11px] font-semibold text-primary uppercase tracking-wider">
                 个股直达
               </div>
@@ -154,7 +154,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 onClick={() => handleSelect(0)}
                 className={cn(
                   "flex items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors",
-                  selectedIndex === 0 ? "bg-primary/20 text-primary font-medium" : "hover:bg-white/5 text-foreground"
+                  selectedIndex === 0 ? "bg-primary/20 text-primary font-medium" : "hover:bg-surface-2 dark:hover:bg-white/5 text-foreground"
                 )}
               >
                 <div className="flex items-center gap-2.5">
@@ -167,7 +167,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 onClick={() => handleSelect(1)}
                 className={cn(
                   "flex items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors",
-                  selectedIndex === 1 ? "bg-primary/20 text-primary font-medium" : "hover:bg-white/5 text-foreground"
+                  selectedIndex === 1 ? "bg-primary/20 text-primary font-medium" : "hover:bg-surface-2 dark:hover:bg-white/5 text-foreground"
                 )}
               >
                 <div className="flex items-center gap-2.5">
@@ -195,7 +195,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     "flex items-center justify-between rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors",
                     isSelected
                       ? "bg-primary/15 text-foreground font-medium"
-                      : "hover:bg-white/5 text-muted-foreground hover:text-foreground"
+                      : "hover:bg-surface-2 dark:hover:bg-white/5 text-muted-foreground hover:text-foreground"
                   )}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -204,7 +204,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border text-xs",
                         isSelected
                           ? "border-primary/40 bg-primary/20 text-primary"
-                          : "border-white/10 bg-white/5 text-muted-foreground"
+                          : "border-border bg-surface-2 text-muted-foreground dark:border-white/10 dark:bg-white/5"
                       )}
                     >
                       <Icon className="h-4 w-4" />
@@ -228,7 +228,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-white/10 bg-black/20 px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between border-t border-border bg-surface-2/60 px-4 py-2 text-[11px] text-muted-foreground dark:border-white/10 dark:bg-black/20">
           <div className="flex items-center gap-3">
             <span>↑↓ 导航</span>
             <span>↵ 确认跳转</span>

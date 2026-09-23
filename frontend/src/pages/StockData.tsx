@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Search, FileText, Newspaper, Loader2, AlertCircle, LineChart, BarChart3, Megaphone,
@@ -8,7 +8,6 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { EarningsSnapshot } from "@/components/ui/EarningsSnapshot";
-import { KlineCard } from "@/components/ui/KlineCard";
 import {
   api, ApiError, type Valuation, type Report, type NewsItem, type ValPercentile, type ValMetric,
   type Financials, type Announcement, type MarginRow, type BlockTradeRow, type HolderRow,
@@ -16,6 +15,8 @@ import {
   type GlobalStock,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+const KlineCard = lazy(() => import("@/components/ui/KlineCard").then(({ KlineCard }) => ({ default: KlineCard })));
 
 // 金额格式化（后端资金单位：元 / 万元）
 const yi = (v: number) => `${(v / 1e8).toFixed(2)} 亿`;
@@ -241,7 +242,7 @@ export function StockData() {
             if (e.key === "Enter") void run();
           }}
           placeholder="A 股 6 位代码，或美股/港股/韩股（AAPL / 00700 / 005930.KS）"
-          className="w-80 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+          className="w-80 rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
         />
         <button
           onClick={() => void run()}
@@ -345,7 +346,11 @@ export function StockData() {
           </GlassCard>
 
           {/* K 线主图（A 股）：含 5 套通达信公式信号（金手指 / 顺向火车轨 / 蓝钻 / 月线反转 / 小黄人）。 */}
-          {kcode && <KlineCard key={kcode} code={kcode} name={val.name} />}
+          {kcode && (
+            <Suspense fallback={<GlassCard className="mb-4 p-6 text-center text-sm text-muted-foreground">正在加载 K 线图…</GlassCard>}>
+              <KlineCard key={kcode} code={kcode} name={val.name} />
+            </Suspense>
+          )}
 
           {/* 财报速览（结论先行摘要，借鉴 equity-research 的结构纪律，剔除评级/目标价） */}
           <EarningsSnapshot val={val} fin={fin} pctl={pctl} />

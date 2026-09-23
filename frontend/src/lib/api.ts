@@ -292,7 +292,20 @@ export interface NewsItem {
 }
 
 export interface IndexQuote {
-  name: string; price: number; change_pct: number; change_amt: number;
+  code: string; name: string; price: number; change_pct: number; change_amt: number;
+}
+
+export interface ReviewIndexQuote {
+  code: string; name: string; price: number | null;
+  change_pct: number | null; change_amt: number | null; as_of: string | null;
+}
+
+export interface IndexKlineBar {
+  datetime: string; open: number; close: number; high: number; low: number; vol: number;
+}
+
+export interface IndexKlineData {
+  code: string; name: string; bars: IndexKlineBar[];
 }
 
 export interface MarketSentiment {
@@ -639,6 +652,9 @@ export interface GlobalStock {
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
+  reviewIndices: (signal?: AbortSignal) => request<ReviewIndexQuote[]>("/indices/review", "GET", undefined, signal),
+  indexKline: (code: string, category: number, signal?: AbortSignal) =>
+    request<IndexKlineData>(`/indices/${encodeURIComponent(code)}/kline?category=${category}&offset=400`, "GET", undefined, signal),
   marketOverview: () => get<MarketOverview>("/market/overview"),
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),

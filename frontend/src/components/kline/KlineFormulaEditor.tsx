@@ -21,11 +21,11 @@ export function KlineFormulaEditor({ formula }: { formula: KlineMainFormulaState
   const busy = formula.status === "loading";
 
   return (
-    <section className="mt-3 overflow-hidden rounded-xl border border-border/70 bg-black/15">
+    <section className="mt-3 overflow-hidden rounded-xl border border-border/70 bg-surface-2/45 dark:bg-black/15">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-white/[0.025]"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface-2/60 dark:hover:bg-white/[0.025]"
         aria-expanded={open}
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -84,7 +84,7 @@ export function KlineFormulaEditor({ formula }: { formula: KlineMainFormulaState
             onChange={(event) => formula.setDraftSource(event.target.value)}
             rows={18}
             spellCheck={false}
-            className="block min-h-[28rem] w-full resize-y bg-[#080b10]/85 px-4 py-4 font-mono text-[12px] leading-5 text-foreground outline-none focus:bg-[#080b10]"
+            className="block min-h-[28rem] w-full resize-y bg-card px-4 py-4 font-mono text-[12px] leading-5 text-foreground outline-none focus:bg-surface-1 dark:bg-[#080b10]/85 dark:focus:bg-[#080b10]"
           />
           {(formula.message || formula.issues.length > 0) && (
             <div className={`border-t px-4 py-3 text-xs ${formula.status === "invalid" ? "border-destructive/30 text-destructive" : "border-border/50 text-muted-foreground"}`}>

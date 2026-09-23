@@ -701,6 +701,37 @@ def indices():
         raise HTTPException(502, f"指数行情异常：{e}") from e
 
 
+@app.get("/api/indices/review")
+def review_indices():
+    """每日复盘中按需展开的指数及板块，按最近两根日线计算涨跌。"""
+    try:
+        return {"data": astock.review_index_quotes()}
+    except astock.DependencyMissing as e:
+        raise HTTPException(501, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"扩展指数行情异常：{e}") from e
+
+
+@app.get("/api/indices/{code}/kline")
+def review_index_kline(
+    code: str,
+    category: int = Query(4),
+    offset: int = Query(400, ge=1, le=800),
+):
+    code = _validate(code)
+    if code not in astock.REVIEW_INDEX_NAMES:
+        raise HTTPException(404, "未收录该指数")
+    if category not in (3, 4, 5, 6):
+        raise HTTPException(422, "不支持的 K 线周期：仅支持 3/4/5/6")
+    try:
+        bars = astock.index_kline(code, category=category, offset=offset)
+        return {"data": {"code": code, "name": astock.REVIEW_INDEX_NAMES[code], "bars": bars}}
+    except astock.DependencyMissing as e:
+        raise HTTPException(501, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"指数 K 线源异常：{e}") from e
+
+
 @app.get("/api/quote")
 def quote(codes: str = Query(..., description="逗号分隔的 6 位代码")):
     """实时行情：现价/涨跌/PE/PB/市值/换手/涨跌停。仅标准库，永远可用。"""

@@ -25,6 +25,20 @@ export const KLINE_RPS_COLOR = {
 };
 export const KLINE_RPS_HOT_LINE = 90;
 
+// ECharts 不继承 CSS 主题变量；坐标轴和浅色曲线需随页面主题切换。
+export function klineChartColors(light: boolean) {
+  return light
+    ? {
+        axis: "#a39b91", text: "#475569", grid: "rgba(71,85,105,0.16)",
+        ma: ["#a16207", "#1d4ed8", "#7e22ce", "#15803d", "#be185d", "#0e7490", "#c2410c", "#334155"],
+        rps: { rps50: "#a16207", rps120: "#15803d", rps250: "#334155", hot: "#b91c1c" },
+      }
+    : {
+        axis: "#334155", text: "#94a3b8", grid: "rgba(148,163,184,0.08)",
+        ma: KLINE_MA_COLOR, rps: KLINE_RPS_COLOR,
+      };
+}
+
 export const KLINE_FREQ = [
   { value: 4, label: "日K" },
   { value: 5, label: "周K" },

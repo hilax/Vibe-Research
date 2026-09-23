@@ -309,7 +309,7 @@ export function SectorStrength() {
               type="button"
               onClick={exportCsv}
               disabled={displayedRows.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
               title="导出当前筛选结果为 CSV"
             >
               <Download className="h-4 w-4" />
@@ -319,7 +319,7 @@ export function SectorStrength() {
               type="button"
               onClick={() => void load(true)}
               disabled={loadingSources || loadingRps || refreshing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
             >
               <RefreshCw className={cn("h-4 w-4", (refreshing || loadingRps) && "animate-spin")} />
               重新计算
@@ -432,7 +432,7 @@ export function SectorStrength() {
                 value={formCode}
                 onChange={event => setFormCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="如 880544"
-                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 font-mono text-sm outline-none focus:border-primary/50"
+                className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 font-mono text-sm outline-none focus:border-primary/50"
               />
             </label>
             <label>
@@ -443,7 +443,7 @@ export function SectorStrength() {
                 onChange={event => setFormName(event.target.value)}
                 maxLength={40}
                 placeholder="如 光伏"
-                className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
               />
             </label>
           </div>
@@ -476,7 +476,7 @@ export function SectorStrength() {
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder="搜索板块代码 / 名称"
-              className="w-full rounded-lg border border-border bg-black/20 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
+              className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
             />
           </div>
           <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">

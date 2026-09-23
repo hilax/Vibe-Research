@@ -325,7 +325,7 @@ function ConditionInput({
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex overflow-hidden rounded-lg border border-border bg-black/20 focus-within:border-primary/50">
+      <div className="flex overflow-hidden rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 focus-within:border-primary/50">
         <input
           type="number"
           value={value}
@@ -939,7 +939,7 @@ export function QuantScreening() {
                   savePersistentSnapshot(null);
                   toast.info("已清空当前筛选结果");
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-surface-2/55 dark:bg-black/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
                 title="清空当前结果"
               >
                 <X className="h-3.5 w-3.5" /> 清空结果
@@ -948,7 +948,7 @@ export function QuantScreening() {
                 type="button"
                 onClick={run}
                 disabled={loading}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-surface-2/55 dark:bg-black/20 px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
               >
                 <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} /> 重新筛选
               </button>
@@ -983,7 +983,7 @@ export function QuantScreening() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
+            <div className="flex rounded-lg border border-border/60 bg-surface-2/70 dark:bg-black/30 p-0.5 text-xs">
               {(["all", "blue_diamond", "classic", "custom"] as const).map((cat) => {
                 const isActive = activeCategoryTab === cat;
                 const label = cat === "all" ? "全部" : CATEGORY_META[cat].title;
@@ -1004,7 +1004,7 @@ export function QuantScreening() {
                     <span>{label}</span>
                     <span className={cn(
                       "rounded-full px-1.5 py-0.2 text-[10px] font-mono",
-                      isActive ? "bg-primary/30 text-primary" : "bg-white/5 text-muted-foreground"
+                      isActive ? "bg-primary/30 text-primary" : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground"
                     )}>
                       {count}
                     </span>
@@ -1020,7 +1020,7 @@ export function QuantScreening() {
                 value={strategySearch}
                 onChange={(e) => setStrategySearch(e.target.value)}
                 placeholder="搜索策略…"
-                className="w-32 sm:w-44 rounded-lg border border-border/60 bg-black/30 py-1 pl-8 pr-3 text-xs outline-none transition-all focus:w-52 focus:border-primary/50"
+                className="w-32 sm:w-44 rounded-lg border border-border/60 bg-surface-2/70 dark:bg-black/30 py-1 pl-8 pr-3 text-xs outline-none transition-all focus:w-52 focus:border-primary/50"
               />
             </div>
 
@@ -1053,7 +1053,7 @@ export function QuantScreening() {
                     "group relative flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all",
                     isActive
                       ? "border-primary/80 bg-gradient-to-br from-primary/15 via-primary/5 to-transparent shadow-md shadow-primary/10 ring-1 ring-primary/40"
-                      : "border-border/60 bg-black/20 hover:border-primary/40 hover:bg-black/30"
+                      : "border-border/60 bg-surface-2/55 dark:bg-black/20 hover:border-primary/40 hover:bg-surface-2/70 dark:hover:bg-black/30"
                   )}
                 >
                   <button
@@ -1170,7 +1170,7 @@ export function QuantScreening() {
                   placeholder="例如：均线金叉策略"
                   onChange={(e) => setNewLabel(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && newLabel.trim() && handleAddStrategy()}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
                 />
               </label>
               <label className="block">
@@ -1181,7 +1181,7 @@ export function QuantScreening() {
                   maxLength={60}
                   placeholder="简要描述选股逻辑"
                   onChange={(e) => setNewDesc(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
                 />
               </label>
             </div>
@@ -1197,7 +1197,7 @@ export function QuantScreening() {
                       "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
                       newBaseStrategy === p.strategy
                         ? "border-primary/60 bg-primary/15 text-primary shadow-sm shadow-primary/10"
-                        : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                        : "border-border bg-surface-2/55 dark:bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
                     )}
                   >
                     {p.label}
@@ -1216,14 +1216,14 @@ export function QuantScreening() {
                   "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-all",
                   copyCurrentSource
                     ? "border-primary/40 bg-primary/10 text-primary"
-                    : "border-border bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                    : "border-border bg-surface-2/55 dark:bg-black/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
                 )}
               >
                 <span className={cn(
                   "flex h-4 w-4 items-center justify-center rounded border text-[10px] transition-all",
                   copyCurrentSource
                     ? "border-primary/60 bg-primary/20 text-primary"
-                    : "border-border bg-black/20"
+                    : "border-border bg-surface-2/55 dark:bg-black/20"
                 )}>
                   {copyCurrentSource && "✓"}
                 </span>
@@ -1269,7 +1269,7 @@ export function QuantScreening() {
                   maxLength={30}
                   onChange={(e) => setEditLabel(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && editLabel.trim() && handleSaveEdit()}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
                 />
               </label>
               <label className="block">
@@ -1280,7 +1280,7 @@ export function QuantScreening() {
                   maxLength={60}
                   placeholder="简要描述选股逻辑"
                   onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                  className="w-full rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
                 />
               </label>
             </div>
@@ -1323,7 +1323,7 @@ export function QuantScreening() {
         {/* 核心筛选链路配置（基础池 + 公式） */}
         <div className="space-y-3">
           {/* ── 选股模式切换：实时选股 vs 历史回测 ── */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/50 bg-black/20 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/50 bg-surface-2/55 dark:bg-black/20 p-3">
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 {screenMode === "live" ? <Zap className="h-4 w-4" /> : <History className="h-4 w-4" />}
@@ -1341,7 +1341,7 @@ export function QuantScreening() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
+              <div className="flex rounded-lg border border-border/60 bg-surface-2/70 dark:bg-black/30 p-0.5 text-xs">
                 <button
                   type="button"
                   onClick={() => { setScreenMode("live"); setAsOfDate(""); }}
@@ -1378,7 +1378,7 @@ export function QuantScreening() {
                     type="date"
                     value={asOfDate}
                     onChange={(e) => { setAsOfDate(e.target.value); }}
-                    className="rounded-lg border border-border/60 bg-black/40 px-2.5 py-1 text-xs font-mono outline-none focus:border-primary/50"
+                    className="rounded-lg border border-border/60 bg-surface-2/85 dark:bg-black/40 px-2.5 py-1 text-xs font-mono outline-none focus:border-primary/50"
                   />
                   {[
                     { label: "1周前", days: 7 },
@@ -1395,7 +1395,7 @@ export function QuantScreening() {
                         d.setDate(d.getDate() - item.days);
                         setAsOfDate(d.toISOString().slice(0, 10));
                       }}
-                      className="rounded border border-border/50 bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40"
+                      className="rounded border border-border/50 bg-surface-2/60 dark:bg-white/5 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40"
                     >
                       {item.label}
                     </button>
@@ -1407,7 +1407,7 @@ export function QuantScreening() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             {/* 基础池条件 */}
-            <div className="rounded-xl border border-border/50 bg-black/20 p-3.5">
+            <div className="rounded-xl border border-border/50 bg-surface-2/55 dark:bg-black/20 p-3.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-sky-400" />
@@ -1435,7 +1435,7 @@ export function QuantScreening() {
                         "rounded px-2 py-0.5 font-mono text-xs transition-colors",
                         fundRatioMin === val
                           ? "bg-sky-500/20 text-sky-400 font-semibold"
-                          : "bg-white/5 text-muted-foreground hover:text-foreground"
+                          : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground hover:text-foreground"
                       )}
                     >
                       {val}%
@@ -1453,7 +1453,7 @@ export function QuantScreening() {
                         "rounded px-2 py-0.5 font-mono text-xs transition-colors",
                         northValueMin === val
                           ? "bg-sky-500/20 text-sky-400 font-semibold"
-                          : "bg-white/5 text-muted-foreground hover:text-foreground"
+                          : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground hover:text-foreground"
                       )}
                     >
                       {val}亿
@@ -1487,7 +1487,7 @@ export function QuantScreening() {
             </div>
 
             {/* 技术公式状态与源码入口 */}
-            <div className="rounded-xl border border-border/50 bg-black/20 p-3.5">
+            <div className="rounded-xl border border-border/50 bg-surface-2/55 dark:bg-black/20 p-3.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Code2 className="h-4 w-4 text-primary" />
@@ -1522,7 +1522,7 @@ export function QuantScreening() {
           </div>
 
           {selected && activeSource && showEditor && (
-            <div className="rounded-xl border border-border/60 bg-black/30 p-3">
+            <div className="rounded-xl border border-border/60 bg-surface-2/70 dark:bg-black/30 p-3">
               <TdxFormulaEditor
                 source={activeSource}
                 defaultSource={selected.defaultSource}
@@ -1540,9 +1540,9 @@ export function QuantScreening() {
           )}
 
           {/* 流程摘要与执行选股按钮 */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/40 bg-black/30 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/40 bg-surface-2/70 dark:bg-black/30 px-4 py-3">
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded-md bg-white/5 px-2 py-1 font-mono text-muted-foreground">
+              <span className="rounded-md bg-surface-2/60 dark:bg-white/5 px-2 py-1 font-mono text-muted-foreground">
                 基础池: 基金 ≥ {fundRatioMin}% OR 北向 ≥ {northValueMin}亿
               </span>
               <span className="text-muted-foreground">➔</span>
@@ -1595,7 +1595,7 @@ export function QuantScreening() {
                 </span>
               </div>
 
-              <div className="h-2 w-full overflow-hidden rounded-full bg-black/40">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2/85 dark:bg-black/40">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-primary/60 via-primary to-amber-400 transition-all duration-300 ease-out"
                   style={{ width: `${aggregateProgress(progressPhase, progressDone, progressTotal).toFixed(1)}%` }}
@@ -1623,7 +1623,7 @@ export function QuantScreening() {
                           ? "bg-primary/25 text-primary ring-1 ring-primary/40"
                           : isDone
                           ? "bg-emerald-500/15 text-emerald-300"
-                          : "bg-white/5 text-muted-foreground/50"
+                          : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground/50"
                       )}
                     >
                       {isDone && <Check className="h-3 w-3" />}
@@ -1676,7 +1676,7 @@ export function QuantScreening() {
                   { label: "T+20 胜率与收益", win: result.backtest_summary.win_rate_20d, ret: result.backtest_summary.avg_return_20d },
                   { label: "T+60 胜率与收益", win: result.backtest_summary.win_rate_60d, ret: result.backtest_summary.avg_return_60d },
                 ].map((item, idx) => (
-                  <div key={idx} className="rounded-lg border border-border/50 bg-black/25 p-2.5">
+                  <div key={idx} className="rounded-lg border border-border/50 bg-surface-2/65 dark:bg-black/25 p-2.5">
                     <div className="text-[11px] text-muted-foreground mb-1">{item.label}</div>
                     <div className="flex items-baseline justify-between">
                       <span className="text-lg font-bold font-mono font-num text-foreground">
@@ -1782,9 +1782,9 @@ export function QuantScreening() {
           )}
 
           <GlassCard className="!p-0 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-5 py-3.5 bg-black/20">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-5 py-3.5 bg-surface-2/55 dark:bg-black/20">
               <div className="flex flex-wrap items-center gap-3">
-                <div className="flex rounded-lg border border-border/60 bg-black/30 p-0.5 text-xs">
+                <div className="flex rounded-lg border border-border/60 bg-surface-2/70 dark:bg-black/30 p-0.5 text-xs">
                   <button
                     onClick={() => {
                       setView("matched");
@@ -1800,7 +1800,7 @@ export function QuantScreening() {
                     <span>技术命中</span>
                     <span className={cn(
                       "rounded-full px-1.5 py-0.2 text-[10px] font-mono",
-                      view === "matched" ? "bg-black/20 text-white" : "bg-white/5 text-muted-foreground"
+                      view === "matched" ? "bg-card text-foreground shadow-sm dark:bg-black/20 dark:text-white" : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground"
                     )}>
                       {result.matched_count}
                     </span>
@@ -1820,7 +1820,7 @@ export function QuantScreening() {
                     <span>基础池</span>
                     <span className={cn(
                       "rounded-full px-1.5 py-0.2 text-[10px] font-mono",
-                      view === "base" ? "bg-black/20 text-white" : "bg-white/5 text-muted-foreground"
+                      view === "base" ? "bg-card text-foreground shadow-sm dark:bg-black/20 dark:text-white" : "bg-surface-2/60 dark:bg-white/5 text-muted-foreground"
                     )}>
                       {result.base_count}
                     </span>
@@ -1834,7 +1834,7 @@ export function QuantScreening() {
                     value={tableSearch}
                     onChange={(e) => setTableSearch(e.target.value)}
                     placeholder="按代码 / 名称 / 行业过滤…"
-                    className="w-48 sm:w-56 rounded-lg border border-border/60 bg-black/30 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
+                    className="w-48 sm:w-56 rounded-lg border border-border/60 bg-surface-2/70 dark:bg-black/30 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-primary/50"
                   />
                   {tableSearch && (
                     <button
@@ -1861,7 +1861,7 @@ export function QuantScreening() {
                       className={cn(
                         "rounded-md px-2 py-1 text-xs transition-colors",
                         tableFilter === f.key
-                          ? "bg-white/15 text-foreground font-medium"
+                          ? "bg-surface-3/70 dark:bg-white/15 text-foreground font-medium"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1876,7 +1876,7 @@ export function QuantScreening() {
                   type="button"
                   onClick={exportCsv}
                   disabled={sortedRows.length === 0}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-black/20 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-surface-2/55 dark:bg-black/20 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                   title="导出当前筛选结果为 CSV"
                 >
                   <Download className="h-3.5 w-3.5" /> 导出 CSV
@@ -1888,7 +1888,7 @@ export function QuantScreening() {
                     handleAddWatch(codes);
                   }}
                   disabled={!sortedRows.some((r) => !watchSet.has(r.code))}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border/40 disabled:bg-black/20 disabled:text-muted-foreground"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs text-primary transition hover:bg-primary/20 disabled:cursor-not-allowed disabled:border-border/40 disabled:bg-surface-2/55 dark:disabled:bg-black/20 disabled:text-muted-foreground"
                   title="把当前表格中未加入自选的股票一次性加入"
                 >
                   <Star className="h-3.5 w-3.5" /> 全部加入自选
@@ -2117,7 +2117,7 @@ export function QuantScreening() {
                                 row.timing_status === "主升通道" ? "bg-sky-500/20 text-sky-400" :
                                 row.timing_status === "乖离过大" ? "bg-amber-500/20 text-amber-400" :
                                 row.timing_status === "破位回避" ? "bg-rose-500/20 text-rose-400" :
-                                "bg-white/10 text-muted-foreground"
+                                "bg-surface-2 dark:bg-white/10 text-muted-foreground"
                               )}
                               title="点击进行 3L 买前十问知行合一复核"
                             >
@@ -2242,7 +2242,7 @@ export function QuantScreening() {
               </div>
             )}
 
-            <div className="flex items-center justify-between border-t border-border/40 px-5 py-2.5 text-xs text-muted-foreground bg-black/10">
+            <div className="flex items-center justify-between border-t border-border/40 px-5 py-2.5 text-xs text-muted-foreground bg-surface-2/35 dark:bg-black/10">
               <div>
                 共显示 <span className="font-mono font-semibold text-foreground">{sortedRows.length}</span> 只股票
                 {filteredRows.length !== rows.length && (
@@ -2278,7 +2278,7 @@ export function QuantScreening() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in-50">
           <div className="relative flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-primary/40 bg-card shadow-2xl overflow-hidden">
             {/* 头部 */}
-            <div className="flex items-center justify-between border-b border-border/50 bg-black/40 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-border/50 bg-surface-2/85 dark:bg-black/40 px-6 py-4">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20 text-primary">
                   <Target className="h-4 w-4" />
@@ -2295,15 +2295,15 @@ export function QuantScreening() {
               <button
                 type="button"
                 onClick={() => { setChecklistStock(null); setCheckedQuestions({}); }}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-surface-2 dark:hover:bg-white/10 hover:text-foreground"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             {/* 关键数据摘要药丸 */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 border-b border-border/40 bg-black/20 p-3 text-xs">
-              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 border-b border-border/40 bg-surface-2/55 dark:bg-black/20 p-3 text-xs">
+              <div className="rounded border border-border/40 bg-surface-2/70 dark:bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">
                   {result?.as_of_date ? `选股日收盘 (${result.as_of_date.slice(5)})` : "最新收盘"}
                 </div>
@@ -2312,22 +2312,22 @@ export function QuantScreening() {
                   <div className="text-[9px] text-primary font-mono mt-0.5">现价 {checklistStock.current_price}</div>
                 )}
               </div>
-              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+              <div className="rounded border border-border/40 bg-surface-2/70 dark:bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">生命线 MA20</div>
                 <div className="mt-0.5 font-mono font-bold font-num text-sky-400">{checklistStock.ma20 ?? "—"}</div>
                 {checklistStock.bias20_pct != null && (
                   <div className="text-[9px] text-muted-foreground font-mono mt-0.5">乖离 {checklistStock.bias20_pct}%</div>
                 )}
               </div>
-              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+              <div className="rounded border border-border/40 bg-surface-2/70 dark:bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">硬止损(-8%)</div>
                 <div className="mt-0.5 font-mono font-bold font-num text-rose-400">{checklistStock.stop_loss_hard_8 ?? "—"}</div>
               </div>
-              <div className="rounded border border-border/40 bg-black/30 p-2 text-center">
+              <div className="rounded border border-border/40 bg-surface-2/70 dark:bg-black/30 p-2 text-center">
                 <div className="text-[10px] text-muted-foreground">RPS250/120</div>
                 <div className="mt-0.5 font-mono font-bold font-num text-primary">{checklistStock.rps250 ?? "—"}/{checklistStock.rps120 ?? "—"}</div>
               </div>
-              <div className="rounded border border-border/40 bg-black/30 p-2 text-center col-span-2 sm:col-span-1">
+              <div className="rounded border border-border/40 bg-surface-2/70 dark:bg-black/30 p-2 text-center col-span-2 sm:col-span-1">
                 <div className="text-[10px] text-muted-foreground">预估盈亏比</div>
                 <div className={cn(
                   "mt-0.5 font-mono font-bold font-num",
@@ -2350,7 +2350,7 @@ export function QuantScreening() {
                       "group flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all",
                       isChecked
                         ? "border-primary/50 bg-primary/10 shadow-sm"
-                        : "border-border/60 bg-black/20 hover:border-primary/30 hover:bg-black/30"
+                        : "border-border/60 bg-surface-2/55 dark:bg-black/20 hover:border-primary/30 hover:bg-surface-2/70 dark:hover:bg-black/30"
                     )}
                   >
                     <div className="mt-0.5 shrink-0">
@@ -2385,7 +2385,7 @@ export function QuantScreening() {
             </div>
 
             {/* 底部评分与操作 */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 bg-black/40 px-6 py-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 bg-surface-2/85 dark:bg-black/40 px-6 py-3.5">
               <div className="flex items-center gap-3">
                 <span className="text-xs text-muted-foreground">知行合一评分:</span>
                 <span className={cn(
@@ -2461,7 +2461,7 @@ function RpsStatusPill({
     icon = <AlertTriangle className="h-3 w-3" />;
     label = "RPS 预热失败";
   } else {
-    tone = "border-border bg-black/20 text-muted-foreground";
+    tone = "border-border bg-surface-2/55 dark:bg-black/20 text-muted-foreground";
     icon = <Database className="h-3 w-3" />;
     label = "RPS 懒加载";
   }

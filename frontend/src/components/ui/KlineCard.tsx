@@ -7,12 +7,12 @@ import { KlineFormulaEditor } from "@/components/kline/KlineFormulaEditor";
 import { api, ApiError, type KlineBar, type Quote, type RpsPoint } from "@/lib/api";
 import { useKlineMainFormula } from "@/hooks/useKlineMainFormula";
 import { useMarketPalette } from "@/hooks/useMarketPalette";
+import { useLightTheme } from "@/hooks/useLightTheme";
 import {
-  KLINE_MA_COLOR as MA_COLOR,
-  KLINE_RPS_COLOR as RPS_COLOR,
   KLINE_RPS_HOT_LINE as RPS_HOT_LINE,
   KLINE_FREQ,
   klineMarketColors,
+  klineChartColors,
   klineFormatVol as fmtVol,
   tdxDrawIconLabel,
   tdxDrawIconSymbol,
@@ -32,6 +32,8 @@ interface KlineCardProps {
 // 视觉、ECharts 配置与原 /stock-kline/:code 路由保持一致；输出 5 套通达信公式信号标记。
 export function KlineCard({ code, name: nameHint }: KlineCardProps) {
   const { subtle } = useMarketPalette();
+  const light = useLightTheme();
+  const chartColors = useMemo(() => klineChartColors(light), [light]);
   const { up: RED, down: GREEN } = klineMarketColors(subtle);
   const [freq, setFreq] = useState<Frequency>(4);
   const [bars, setBars] = useState<KlineBar[] | null>(null);
@@ -172,42 +174,42 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
     const xAxes: any[] = [
       {
         type: "category", data: series.dates, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
         splitLine: { show: false },
       },
       {
         type: "category", data: series.dates, gridIndex: 1, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
         axisLabel: { show: false },
       },
     ];
     const yAxes: any[] = [
       {
         scale: true, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
-        splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
       },
       {
         scale: true, gridIndex: 1, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10, formatter: (v: number) => fmtVol(v) },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10, formatter: (v: number) => fmtVol(v) },
         splitLine: { show: false },
       },
     ];
     if (series.showRps) {
       xAxes.push({
         type: "category", data: series.dates, gridIndex: 2, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
         splitLine: { show: false },
       });
       yAxes.push({
         min: 0, max: 100, gridIndex: 2, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
-        splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
       });
     }
 
@@ -237,7 +239,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
         smooth: false,
         showSymbol: false,
         connectNulls: false,
-        lineStyle: { width: 1, color: MA_COLOR[index % MA_COLOR.length] },
+        lineStyle: { width: 1, color: chartColors.ma[index % chartColors.ma.length] },
       });
     });
 
@@ -245,9 +247,9 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
     const xAxisIndices = [0, 1];
     if (series.showRps) {
       const rpsLines = [
-        { name: "RPS50", base: series.rps50Base, hot: series.rps50Hot, color: RPS_COLOR.rps50 },
-        { name: "RPS120", base: series.rps120Base, hot: series.rps120Hot, color: RPS_COLOR.rps120 },
-        { name: "RPS250", base: series.rps250Base, hot: series.rps250Hot, color: RPS_COLOR.rps250 },
+        { name: "RPS50", base: series.rps50Base, hot: series.rps50Hot, color: chartColors.rps.rps50 },
+        { name: "RPS120", base: series.rps120Base, hot: series.rps120Hot, color: chartColors.rps.rps120 },
+        { name: "RPS250", base: series.rps250Base, hot: series.rps250Hot, color: chartColors.rps.rps250 },
       ];
       for (const { name, base, hot, color } of rpsLines) {
         dataSeries.push(
@@ -256,7 +258,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
             lineStyle: { width: 1, color, cap: "round", join: "round" } },
           { name: `${name} ≥ ${RPS_HOT_LINE}`, type: "line", data: hot, xAxisIndex: 2, yAxisIndex: 2,
             smooth: false, showSymbol: false, connectNulls: false,
-            lineStyle: { width: 1.8, color: RPS_COLOR.hot, cap: "round", join: "round" }, z: 5,
+            lineStyle: { width: 1.8, color: chartColors.rps.hot, cap: "round", join: "round" }, z: 5,
             legendHoverLink: false },
         );
       }
@@ -269,7 +271,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
       animation: false,
       legend: {
         top: 4, left: "center",
-        textStyle: { color: "#94a3b8", fontSize: 11 },
+        textStyle: { color: chartColors.text, fontSize: 11 },
         data: legendData,
       },
       tooltip: {
@@ -345,11 +347,11 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
         { type: "slider", xAxisIndex: xAxisIndices, bottom: 6, height: 18,
           startValue: defaultStartValue, endValue: series.dates.length - 1,
           borderColor: "#334155", fillerColor: "rgba(99,102,241,0.18)",
-          handleStyle: { color: "#6366f1" }, textStyle: { color: "#94a3b8", fontSize: 10 } },
+          handleStyle: { color: "#6366f1" }, textStyle: { color: chartColors.text, fontSize: 10 } },
       ],
       series: dataSeries,
     }, { notMerge: true });
-  }, [series]);
+  }, [series, chartColors]);
 
   const latestDailyBar = freq === 4 && bars?.length ? bars[bars.length - 1] : null;
   const previousDailyBar = freq === 4 && bars && bars.length > 1 ? bars[bars.length - 2] : null;
@@ -386,7 +388,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
           <span className="text-[11px] font-normal text-muted-foreground/60">· 均线与图标由可编辑公式绘制</span>
         </h3>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg bg-black/20 p-1 text-xs">
+          <div className="flex rounded-lg bg-surface-2/55 dark:bg-black/20 p-1 text-xs">
             {FREQ_OPTIONS.map((o) => (
               <button key={o.value}
                 onClick={() => setFreq(o.value)}
@@ -402,7 +404,7 @@ export function KlineCard({ code, name: nameHint }: KlineCardProps) {
         </div>
       </div>
       {currentPrice != null && (
-        <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg bg-black/15 px-3 py-2 text-xs">
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg bg-surface-2/45 dark:bg-black/15 px-3 py-2 text-xs">
           <span className="text-muted-foreground">
             现价 <b className={cn("ml-1 font-mono text-base", dailyTone)}>{currentPrice.toFixed(2)}</b>
           </span>

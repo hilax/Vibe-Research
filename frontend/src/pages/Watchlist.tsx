@@ -88,7 +88,7 @@ export function Watchlist() {
             }}
             rows={2}
             placeholder={"如：600519 000858, 002463\n300750 688017"}
-            className="flex-1 resize-y rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+            className="flex-1 resize-y rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
           />
           <button
             onClick={add}

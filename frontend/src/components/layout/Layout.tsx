@@ -85,7 +85,7 @@ export function Layout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "z-20 flex shrink-0 flex-row border-r border-border/50 bg-[#0c0f17] transition-all duration-200 md:flex-col",
+          "z-20 flex shrink-0 flex-row border-r border-border bg-surface-1 dark:bg-[#0c0f17] transition-all duration-200 md:flex-col",
           collapsed ? "md:w-16" : "md:w-60"
         )}
       >
@@ -129,7 +129,7 @@ export function Layout() {
           {NAV_GROUPS.map((group) => (
             <div key={group.group} className="space-y-1">
               {!collapsed && (
-                <div className="hidden md:block px-2.5 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground/60 uppercase font-mono">
+                <div className="hidden md:block px-2.5 py-1 text-[10px] font-semibold tracking-wider text-muted-foreground/85 uppercase font-mono">
                   {group.group}
                 </div>
               )}
@@ -174,7 +174,7 @@ export function Layout() {
                                 collapsed ? "justify-center p-1.5" : "gap-2 px-2 py-1 text-[11px]",
                                 sactive
                                   ? "bg-primary/10 font-medium text-primary"
-                                  : "text-muted-foreground/75 hover:bg-surface-2 hover:text-foreground"
+                                  : "text-muted-foreground hover:bg-surface-2 hover:text-foreground"
                               )}
                             >
                               <SIcon className="h-3 w-3 shrink-0" />

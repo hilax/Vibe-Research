@@ -54,42 +54,42 @@
   }
 
   .light {
-    --background: 210 30% 97%;
-    --foreground: 222 40% 12%;
+    --background: 36 33% 97%;
+    --foreground: 222 31% 15%;
     --card: 0 0% 100%;
-    --card-foreground: 222 40% 12%;
+    --card-foreground: 222 31% 15%;
 
-    --surface-0: 210 30% 97%;
+    --surface-0: 36 33% 97%;
     --surface-1: 0 0% 100%;
-    --surface-2: 210 20% 93%;
-    --surface-3: 214 20% 86%;
+    --surface-2: 36 18% 93%;
+    --surface-3: 32 14% 86%;
 
-    --primary: 15 82% 50%;             /* 暖橙红主色（亮色版，略深保对比） */
+    --primary: 15 78% 39%;             /* 小字号文字在白底上也清晰 */
     --primary-foreground: 0 0% 100%;
-    --accent: 25 90% 50%;
+    --accent: 24 82% 36%;
     --accent-foreground: 0 0% 100%;
 
-    --muted: 210 20% 92%;
-    --muted-foreground: 215 16% 42%;
-    --destructive: 0 74% 55%;
+    --muted: 36 18% 92%;
+    --muted-foreground: 218 15% 35%;
+    --destructive: 0 72% 43%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214 20% 84%;
+    --border: 32 13% 82%;
 
-    --success: 145 62% 40%;
-    --danger: 0 74% 52%;
-    --market-up: 0 74% 52%;
-    --market-down: 145 62% 40%;
-    --warning: 38 92% 45%;
-    --info: 15 82% 50%;
+    --success: 145 61% 30%;
+    --danger: 0 72% 43%;
+    --market-up: 0 72% 43%;
+    --market-down: 145 61% 30%;
+    --warning: 34 87% 32%;
+    --info: 15 78% 39%;
 
-    --glass-fill-top: rgba(255, 255, 255, 0.75);
-    --glass-fill-bot: rgba(255, 255, 255, 0.4);
-    --glass-stroke: rgba(15, 40, 70, 0.12);
-    --glass-hi: rgba(255, 255, 255, 0.8);
+    --glass-fill-top: rgba(255, 255, 255, 0.98);
+    --glass-fill-bot: rgba(255, 255, 255, 0.9);
+    --glass-stroke: rgba(91, 76, 63, 0.18);
+    --glass-hi: rgba(255, 255, 255, 0.95);
 
-    --chart-grid: 214 20% 88%;
-    --chart-text: 215 16% 42%;
-    --chart-axis: 214 20% 78%;
+    --chart-grid: 32 14% 87%;
+    --chart-text: 218 15% 35%;
+    --chart-axis: 32 13% 72%;
   }
 
   /* 公司使用：涨跌仍可区分，但使用低饱和暖灰 / 冷灰，避免大面积红绿过于醒目。 */
@@ -125,8 +125,7 @@
 
   .light body {
     background-image:
-      radial-gradient(1100px 620px at 12% -12%, hsl(15 85% 55% / 0.08), transparent 60%),
-      radial-gradient(980px 720px at 108% 112%, hsl(220 65% 60% / 0.06), transparent 55%);
+      radial-gradient(1100px 620px at 12% -12%, hsl(25 80% 70% / 0.08), transparent 60%);
   }
 
   /* prose 表格 */
@@ -150,7 +149,7 @@
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
   }
-  .light .glass { box-shadow: 0 10px 26px rgba(30, 60, 100, 0.10), inset 0 1px 0 var(--glass-hi); }
+  .light .glass { box-shadow: 0 5px 18px rgba(54, 45, 37, 0.07), inset 0 1px 0 var(--glass-hi); }
 
   /* Pro-Terminal 卡片：深石墨底 + 超细发丝边框 + 微内阴影（高信息密度专用） */
   .pro-card {

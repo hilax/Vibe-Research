@@ -96,7 +96,7 @@ export function TdxFormulaEditor({
   };
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border/70 bg-black/15">
+    <section className="overflow-hidden rounded-xl border border-border/70 bg-surface-2/45 dark:bg-black/15">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -121,7 +121,7 @@ export function TdxFormulaEditor({
             type="button"
             onClick={onReset}
             disabled={disabled || !isDirty}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-black/15 px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2/45 dark:bg-black/15 px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             恢复默认
@@ -156,9 +156,9 @@ export function TdxFormulaEditor({
           onChange={(event) => onSourceChange(event.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="请粘贴通达信条件选股公式，例如：&#10;XG:=C&gt;MA(C,20) AND C&gt;MA(C,200);&#10;XG;"
-          className="block min-h-[24rem] w-full resize-y bg-[#080b10]/80 px-4 py-4 font-mono text-[13px] leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/45 focus:bg-[#080b10] disabled:cursor-not-allowed disabled:opacity-60"
+          className="block min-h-[24rem] w-full resize-y bg-card px-4 py-4 font-mono text-[13px] leading-6 text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:bg-surface-1 dark:bg-[#080b10]/80 dark:focus:bg-[#080b10] disabled:cursor-not-allowed disabled:opacity-60"
         />
-        <div className="pointer-events-none absolute bottom-2 right-3 rounded bg-black/60 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+        <div className="pointer-events-none absolute bottom-2 right-3 rounded bg-surface-2 px-2 py-1 font-mono text-[10px] text-muted-foreground dark:bg-black/60">
           {lineCount} 行 · {source.length} 字符
         </div>
       </div>
@@ -219,7 +219,7 @@ export function TdxFormulaEditor({
         </div>
       )}
 
-      <div className="border-t border-border/60 bg-black/10 px-4 py-3">
+      <div className="border-t border-border/60 bg-surface-2/35 dark:bg-black/10 px-4 py-3">
         <p className="text-[11px] leading-5 text-muted-foreground">
           <span className="font-medium text-foreground/80">常用支持函数：</span>{" "}
           <span className="font-mono">{SUPPORTED_FUNCTIONS.join(" · ")}</span>

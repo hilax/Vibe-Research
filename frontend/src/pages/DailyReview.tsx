@@ -1,16 +1,16 @@
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Sparkles, Loader2, AlertCircle, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Sparkles, Loader2, AlertCircle, RefreshCw, Gauge, ArrowDownUp, TrendingUp, TrendingDown, Plus, X, Flame, BarChart3, Globe, ChevronDown } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
-import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type GlobalIndex } from "@/lib/api";
+import { api, ApiError, type IndexQuote, type ReviewIndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type GlobalIndex } from "@/lib/api";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
+
+const MarkdownContent = lazy(() => import("@/components/ui/MarkdownContent"));
 
 // A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致，
 // 对中国用户最不易看错（Simon 2026-07-05 确认；非国际绿涨惯例，是有意选择，勿改）。
@@ -18,9 +18,78 @@ const pctColor = (p: number) => (p > 0 ? "text-market-up" : p < 0 ? "text-market
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
 
+const REVIEW_INDEX_CACHE_KEY = "vr-review-indices-v1";
+const REVIEW_INDEX_COUNT = 29;
+const REVIEW_INDEX_ACTIVE_TTL = 2 * 60 * 1000;
+
+interface ReviewIndexCache {
+  day: string;
+  fetchedAt: number;
+  final: boolean;
+  rows: ReviewIndexQuote[];
+}
+
+let reviewIndexMemoryCache: ReviewIndexCache | null = null;
+
+function chinaMarketClock(now: number) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    weekday: "short", hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  const day = `${part("year")}-${part("month")}-${part("day")}`;
+  const closed = ["Sat", "Sun"].includes(part("weekday")) || Number(part("hour")) >= 15;
+  return { day, closed };
+}
+
+function readReviewIndexCache(): ReviewIndexCache | null {
+  if (reviewIndexMemoryCache) return reviewIndexMemoryCache;
+  try {
+    const value = JSON.parse(localStorage.getItem(REVIEW_INDEX_CACHE_KEY) || "null") as ReviewIndexCache | null;
+    if (!value || typeof value.day !== "string" || !Number.isFinite(value.fetchedAt)
+      || typeof value.final !== "boolean" || !Array.isArray(value.rows)
+      || value.rows.length !== REVIEW_INDEX_COUNT) return null;
+    if (!value.rows.every((row) => row && typeof row.name === "string"
+      && typeof row.code === "string" && /^\d{6}$/.test(row.code)
+      && (row.price === null || Number.isFinite(row.price))
+      && (row.change_pct === null || Number.isFinite(row.change_pct))
+      && (row.as_of === null || typeof row.as_of === "string"))) return null;
+    reviewIndexMemoryCache = value;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function freshReviewIndexCache(now: number): ReviewIndexCache | null {
+  const cached = readReviewIndexCache();
+  if (!cached || cached.day !== chinaMarketClock(now).day || cached.fetchedAt > now) return null;
+  if (cached.final) return cached;
+  return !chinaMarketClock(now).closed && now - cached.fetchedAt < REVIEW_INDEX_ACTIVE_TTL ? cached : null;
+}
+
+function saveReviewIndexCache(rows: ReviewIndexQuote[]) {
+  if (rows.length !== REVIEW_INDEX_COUNT) return;
+  const now = Date.now();
+  const market = chinaMarketClock(now);
+  const complete = rows.every((row) => Number.isFinite(row.price) && Number.isFinite(row.change_pct) && row.as_of !== null);
+  reviewIndexMemoryCache = { day: market.day, fetchedAt: now, final: market.closed && complete, rows };
+  try {
+    localStorage.setItem(REVIEW_INDEX_CACHE_KEY, JSON.stringify(reviewIndexMemoryCache));
+  } catch {
+    // 隐私模式等场景 localStorage 不可用时，当前页面仍可复用内存缓存。
+  }
+}
+
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
   const [idxErr, setIdxErr] = useState(false);
+  const [moreIndexOpen, setMoreIndexOpen] = useState(false);
+  const [moreIndices, setMoreIndices] = useState<ReviewIndexQuote[]>([]);
+  const [moreIndexLoading, setMoreIndexLoading] = useState(false);
+  const [moreIndexError, setMoreIndexError] = useState<string | null>(null);
+  const [moreIndexRefresh, setMoreIndexRefresh] = useState(0);
+  const lastMoreIndexRefresh = useRef(0);
   const [review, setReview] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewErr, setReviewErr] = useState<string | null>(null);
@@ -42,6 +111,7 @@ export function DailyReview() {
 
   const loadIndices = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
+    if (moreIndexOpen) setMoreIndexRefresh((value) => value + 1);
     api.globalIndices().then(setGlobalIdx).catch(() => {});
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
     api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
@@ -65,6 +135,35 @@ export function DailyReview() {
     loadIndices();
     refreshWatch(loadWatch());
   }, []);
+
+  useEffect(() => {
+    if (!moreIndexOpen) return;
+    const force = moreIndexRefresh !== lastMoreIndexRefresh.current;
+    lastMoreIndexRefresh.current = moreIndexRefresh;
+    const cached = force ? null : freshReviewIndexCache(Date.now());
+    if (cached) {
+      setMoreIndices(cached.rows);
+      setMoreIndexLoading(false);
+      setMoreIndexError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setMoreIndexLoading(true);
+    setMoreIndexError(null);
+    api.reviewIndices(controller.signal)
+      .then((rows) => {
+        setMoreIndices(rows);
+        saveReviewIndexCache(rows);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setMoreIndexError(error instanceof ApiError && error.status === 404
+          ? "当前后端尚未加载扩展指数接口，请重启后端服务后再试。"
+          : error instanceof ApiError ? error.message : "扩展指数暂不可用，请稍后重试。");
+      })
+      .finally(() => { if (!controller.signal.aborted) setMoreIndexLoading(false); });
+    return () => controller.abort();
+  }, [moreIndexOpen, moreIndexRefresh]);
 
   const addWatch = () => {
     // 支持一次粘贴多只（逗号 / 空格分隔）；全部无效或重复则清空输入、无副作用。
@@ -150,32 +249,77 @@ export function DailyReview() {
               const isUp = i.change_pct > 0;
               const isDown = i.change_pct < 0;
               return (
-                <GlassCard
-                  key={i.name}
-                  className={cn(
-                    "!p-3.5 relative overflow-hidden transition-all hover:border-primary/40",
-                    isUp ? "border-l-2 border-l-market-up" : isDown ? "border-l-2 border-l-market-down" : "border-l-2 border-l-muted-foreground"
-                  )}
-                >
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground/90 truncate">{i.name}</span>
-                    <span className={cn("font-mono font-num font-semibold text-xs", pctColor(i.change_pct))}>
-                      {isUp && "+"}
-                      {i.change_pct.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <span className={cn("font-mono font-num text-xl font-bold tracking-tight", pctColor(i.change_pct))}>
-                      {i.price.toFixed(2)}
-                    </span>
-                    <span className={cn("font-mono font-num text-xs", pctColor(i.change_pct))}>
-                      {isUp && "+"}
-                      {i.change_amt?.toFixed(2) ?? ""}
-                    </span>
-                  </div>
-                </GlassCard>
+                <Link key={i.code} to={`/index-kline/${i.code}`} aria-label={`查看${i.name} K 线`}>
+                  <GlassCard
+                    className={cn(
+                      "!p-3.5 relative h-full overflow-hidden transition-all hover:border-primary/40",
+                      isUp ? "border-l-2 border-l-market-up" : isDown ? "border-l-2 border-l-market-down" : "border-l-2 border-l-muted-foreground"
+                    )}
+                  >
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground/90 truncate">{i.name}</span>
+                      <span className={cn("font-mono font-num font-semibold text-xs", pctColor(i.change_pct))}>
+                        {isUp && "+"}
+                        {i.change_pct.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                      <span className={cn("font-mono font-num text-xl font-bold tracking-tight", pctColor(i.change_pct))}>
+                        {i.price.toFixed(2)}
+                      </span>
+                      <span className={cn("font-mono font-num text-xs", pctColor(i.change_pct))}>
+                        {isUp && "+"}
+                        {i.change_amt?.toFixed(2) ?? ""}
+                      </span>
+                    </div>
+                  </GlassCard>
+                </Link>
               );
             })}
+      </div>
+
+      <div className="mb-6">
+        <button
+          type="button"
+          aria-expanded={moreIndexOpen}
+          aria-controls="more-review-indices"
+          onClick={() => setMoreIndexOpen((open) => !open)}
+          className="flex w-full items-center justify-between rounded-xl border border-border/50 bg-surface-2/40 px-4 py-3 text-left text-sm font-medium transition-colors hover:border-primary/40"
+        >
+          <span>更多指数与板块 <span className="ml-1 text-xs text-muted-foreground">29 项 · 涨跌按最新日 K 与前收盘计算</span></span>
+          <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", moreIndexOpen && "rotate-180")} />
+        </button>
+        {moreIndexOpen && (
+          <div id="more-review-indices" className="mt-3">
+            {moreIndexLoading && <p role="status" className="py-4 text-center text-sm text-muted-foreground"><Loader2 className="mr-1 inline h-4 w-4 animate-spin" />加载指数行情…</p>}
+            {moreIndexError && <p role="alert" className="py-3 text-sm text-destructive">{moreIndexError}</p>}
+            {!moreIndexLoading && !moreIndexError && moreIndices.length === 0 && <p className="py-3 text-sm text-muted-foreground">暂无指数行情</p>}
+            {!moreIndexLoading && !moreIndexError && moreIndices.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {moreIndices.map((item) => (
+                  <Link
+                    key={item.code}
+                    to={`/index-kline/${item.code}`}
+                    aria-label={`查看${item.name} K 线`}
+                    className="rounded-xl border border-border/50 bg-surface-2/30 p-3 transition-colors hover:border-primary/50 hover:bg-surface-2/60"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="truncate text-xs font-medium">{item.name}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{item.code}</span>
+                    </div>
+                    <div className={cn("mt-2 font-mono font-num text-lg font-bold", item.change_pct == null ? "text-muted-foreground" : pctColor(item.change_pct))}>
+                      {item.price == null ? "—" : item.price.toFixed(2)}
+                    </div>
+                    <div className={cn("mt-0.5 text-xs font-mono font-num", item.change_pct == null ? "text-muted-foreground" : pctColor(item.change_pct))}>
+                      {item.change_pct == null ? "涨跌暂无" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct.toFixed(2)}%`}
+                      {item.as_of && <span className="ml-2 text-[10px] font-normal text-muted-foreground">{item.as_of.slice(0, 10)}</span>}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 1b. 全球市场（隔夜外围脸色：A 股常看美股 / 港股） */}
@@ -215,7 +359,7 @@ export function DailyReview() {
             onChange={(e) => setWatchInput(e.target.value.replace(/[^\d,\s]/g, "").slice(0, 80))}
             onKeyDown={(e) => e.key === "Enter" && addWatch()}
             placeholder="加自选：可批量，如 600519 000858"
-            className="w-60 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+            className="w-60 rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
           />
           <button onClick={addWatch}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25">
@@ -269,7 +413,11 @@ export function DailyReview() {
         )}
         {review ? (
           <>
-            <div className="prose prose-sm prose-invert mt-4 max-w-none text-foreground"><ReactMarkdown remarkPlugins={[remarkGfm]}>{review}</ReactMarkdown></div>
+            <div className="prose prose-sm prose-invert mt-4 max-w-none text-foreground">
+              <Suspense fallback={<p className="whitespace-pre-wrap">{review}</p>}>
+                <MarkdownContent content={review} />
+              </Suspense>
+            </div>
             {!reviewLoading && <div className="mt-3"><SaveNoteButton kind="复盘" title={`每日复盘 ${today}`} content={review} /></div>}
           </>
         ) : !needConfig && !reviewErr && !reviewLoading ? (

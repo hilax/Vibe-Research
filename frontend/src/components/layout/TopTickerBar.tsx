@@ -38,7 +38,7 @@ export function TopTickerBar({ onOpenSearch }: TopTickerBarProps) {
     ((currentMinutes >= 570 && currentMinutes <= 690) || (currentMinutes >= 780 && currentMinutes <= 900));
 
   return (
-    <header className="sticky top-0 z-30 flex h-11 w-full items-center justify-between border-b border-border/50 bg-[#090b10]/90 px-3 sm:px-5 backdrop-blur-md transition-colors">
+    <header className="sticky top-0 z-30 flex h-11 w-full items-center justify-between border-b border-border bg-surface-1/95 dark:bg-[#090b10]/90 px-3 sm:px-5 backdrop-blur-md transition-colors">
       {/* Left: Live Ticker Pills */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
         {/* Trading Status Indicator */}
@@ -98,7 +98,7 @@ export function TopTickerBar({ onOpenSearch }: TopTickerBarProps) {
         >
           <Search className="h-3.5 w-3.5 text-primary" />
           <span className="hidden md:inline">搜索股票 / 菜单...</span>
-          <kbd className="hidden lg:inline-flex rounded border border-border/80 bg-black/30 px-1.5 py-0.2 text-[10px] font-mono text-muted-foreground">
+          <kbd className="hidden lg:inline-flex rounded border border-border/80 bg-surface-2 dark:bg-black/30 px-1.5 py-0.2 text-[10px] font-mono text-muted-foreground">
             Ctrl K
           </kbd>
         </button>

@@ -125,7 +125,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
                 </div>
                 <div>
                   <p className="mb-1.5 text-xs font-medium text-muted-foreground">将随提问发给 AI 的本页上下文：</p>
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2/70 dark:bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
 {context}
                   </pre>
                 </div>
@@ -195,7 +195,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI" }: Pro
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
                       rows={1}
                       placeholder="就本页内容提问…"
-                      className="flex-1 resize-none rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+                      className="flex-1 resize-none rounded-lg border border-border bg-surface-2/55 dark:bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
                     />
                     <button onClick={() => send(input)} disabled={loading || !input.trim()}
                       className="rounded-lg bg-primary/15 p-2 text-primary hover:bg-primary/25 disabled:opacity-40">

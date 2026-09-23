@@ -162,6 +162,21 @@ def get_sw_industry(code: str) -> str:
 # A股大盘指数（前缀规则与个股不同，固定带前缀代码）
 A_INDICES = ["sh000001", "sz399001", "sz399006", "sh000300"]
 
+# 每日复盘的扩展指数。通达信 index_bars 能同时处理沪深指数与 880 板块指数。
+REVIEW_INDICES = (
+    ("000016", "上证50"), ("880801", "基金重仓"), ("399311", "国证1000"),
+    ("399364", "消费100"), ("000159", "沪股通"), ("399372", "大盘成长"),
+    ("880802", "QFII重仓"), ("000011", "基金指数"), ("399004", "深证100R"),
+    ("000300", "沪深300"), ("399370", "国证成长"), ("399006", "创业板指"),
+    ("399005", "中小100"), ("399001", "深证成指"), ("000688", "科创50"),
+    ("399106", "深证综指"), ("000852", "中证1000"), ("399303", "国证2000"),
+    ("399376", "小盘成长"), ("399905", "中证500"), ("399101", "中小综指"),
+    ("399102", "创业板综"), ("000001", "上证指数"), ("880372", "食品饮料"),
+    ("880381", "白酒"), ("880973", "医美概念"), ("000075", "医药等权"),
+    ("000991", "全指医药"), ("880398", "医疗保健"),
+)
+REVIEW_INDEX_NAMES = dict(REVIEW_INDICES)
+
 
 def index_quote() -> list[dict]:
     """A股大盘指数实时行情（上证/深证成指/创业板指/沪深300）。"""
@@ -170,7 +185,7 @@ def index_quote() -> list[dict]:
     for full in A_INDICES:
         q = parsed.get(full[2:])
         if q:
-            out.append({"name": q["name"], "price": q["price"], "change_pct": q["change_pct"], "change_amt": q["change_amt"]})
+            out.append({"code": full[2:], "name": q["name"], "price": q["price"], "change_pct": q["change_pct"], "change_amt": q["change_amt"]})
     return out
 
 
@@ -413,6 +428,57 @@ def kline(
             break
 
     return [records_by_time[key] for key in sorted(records_by_time)]
+
+
+def _index_bar_rows(frame) -> list[dict]:
+    """将通达信指数行收敛到可安全序列化的 K 线字段。"""
+    if frame is None or frame.empty:
+        return []
+    rows = []
+    for raw in frame.to_dict("records"):
+        try:
+            values = {key: float(raw[key]) for key in ("open", "close", "low", "high", "vol")}
+            moment = str(raw["datetime"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not moment or moment == "NaT" or not all(math.isfinite(v) for v in values.values()):
+            continue
+        if min(values["open"], values["close"], values["low"], values["high"]) <= 0 or values["vol"] < 0:
+            continue
+        rows.append({"datetime": moment, **values})
+    return sorted(rows, key=lambda row: row["datetime"])
+
+
+def review_index_quotes() -> list[dict]:
+    """按用户指定顺序返回扩展指数的最近日线及相对前收盘的涨跌。"""
+    client = _mootdx_client()
+    out = []
+    failed = 0
+    for code, name in REVIEW_INDICES:
+        try:
+            rows = _index_bar_rows(client.index_bars(symbol=code, frequency=4, offset=2))
+        except Exception:  # noqa: BLE001 — 单个指数失效不拖垮整组
+            failed += 1
+            rows = []
+        latest = rows[-1] if rows else None
+        previous = rows[-2] if len(rows) > 1 else None
+        change = latest["close"] - previous["close"] if latest and previous and previous["close"] else None
+        out.append({
+            "code": code, "name": name,
+            "price": latest["close"] if latest else None,
+            "change_amt": round(change, 2) if change is not None else None,
+            "change_pct": round(change / previous["close"] * 100, 2) if change is not None else None,
+            "as_of": latest["datetime"] if latest else None,
+        })
+    if failed == len(REVIEW_INDICES):
+        raise RuntimeError("通达信指数行情源暂不可用")
+    return out
+
+
+def index_kline(code: str, category: int = 4, offset: int = 400) -> list[dict]:
+    """指数专用 K 线；880 板块和 000/399 指数均走 index_bars。"""
+    frame = _mootdx_client().index_bars(symbol=code, frequency=category, offset=offset)
+    return _index_bar_rows(frame)
 
 
 def exact_qfq_closes(

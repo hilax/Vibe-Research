@@ -8,12 +8,12 @@ import { KlineFormulaEditor } from "@/components/kline/KlineFormulaEditor";
 import { api, ApiError, type KlineBar, type Quote, type RpsPoint } from "@/lib/api";
 import { useKlineMainFormula } from "@/hooks/useKlineMainFormula";
 import { useMarketPalette } from "@/hooks/useMarketPalette";
+import { useLightTheme } from "@/hooks/useLightTheme";
 import {
-  KLINE_MA_COLOR as MA_COLOR,
-  KLINE_RPS_COLOR as RPS_COLOR,
   KLINE_RPS_HOT_LINE as RPS_HOT_LINE,
   KLINE_FREQ,
   klineMarketColors,
+  klineChartColors,
   klineFormatVol as fmtVol,
   tdxDrawIconLabel,
   tdxDrawIconSymbol,
@@ -25,6 +25,8 @@ const FREQ_OPTIONS = KLINE_FREQ as unknown as { value: Frequency; label: string 
 
 export function StockKline() {
   const { subtle } = useMarketPalette();
+  const light = useLightTheme();
+  const chartColors = useMemo(() => klineChartColors(light), [light]);
   const { up: RED, down: GREEN } = klineMarketColors(subtle);
   const { code = "" } = useParams<{ code: string }>();
   const navigate = useNavigate();
@@ -181,42 +183,42 @@ export function StockKline() {
     const xAxes: any[] = [
       {
         type: "category", data: series.dates, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
         splitLine: { show: false },
       },
       {
         type: "category", data: series.dates, gridIndex: 1, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
         axisLabel: { show: false },
       },
     ];
     const yAxes: any[] = [
       {
         scale: true, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
-        splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
       },
       {
         scale: true, gridIndex: 1, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10, formatter: (v: number) => fmtVol(v) },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10, formatter: (v: number) => fmtVol(v) },
         splitLine: { show: false },
       },
     ];
     if (series.showRps) {
       xAxes.push({
         type: "category", data: series.dates, gridIndex: 2, scale: true, boundaryGap: false,
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
         splitLine: { show: false },
       });
       yAxes.push({
         min: 0, max: 100, gridIndex: 2, position: "left",
-        axisLine: { lineStyle: { color: "#334155" } },
-        axisLabel: { color: "#94a3b8", fontSize: 10 },
-        splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+        axisLine: { lineStyle: { color: chartColors.axis } },
+        axisLabel: { color: chartColors.text, fontSize: 10 },
+        splitLine: { lineStyle: { color: chartColors.grid } },
       });
     }
 
@@ -246,7 +248,7 @@ export function StockKline() {
         smooth: false,
         showSymbol: false,
         connectNulls: false,
-        lineStyle: { width: 1, color: MA_COLOR[index % MA_COLOR.length] },
+        lineStyle: { width: 1, color: chartColors.ma[index % chartColors.ma.length] },
       });
     });
 
@@ -256,9 +258,9 @@ export function StockKline() {
       // 通达信写法：完整 RPSx 原色线在底层连续绘制，
       // IF(RPSx>=90, RPSx, DRAWNULL) 仅在强势区叠红色。
       const rpsLines = [
-        { name: "RPS50", base: series.rps50Base, hot: series.rps50Hot, color: RPS_COLOR.rps50 },
-        { name: "RPS120", base: series.rps120Base, hot: series.rps120Hot, color: RPS_COLOR.rps120 },
-        { name: "RPS250", base: series.rps250Base, hot: series.rps250Hot, color: RPS_COLOR.rps250 },
+        { name: "RPS50", base: series.rps50Base, hot: series.rps50Hot, color: chartColors.rps.rps50 },
+        { name: "RPS120", base: series.rps120Base, hot: series.rps120Hot, color: chartColors.rps.rps120 },
+        { name: "RPS250", base: series.rps250Base, hot: series.rps250Hot, color: chartColors.rps.rps250 },
       ];
       for (const { name, base, hot, color } of rpsLines) {
         dataSeries.push(
@@ -268,7 +270,7 @@ export function StockKline() {
           // 同名系列第二条：图例自动合并为一项，只在 ≥90 的位置可见。
           { name: `${name} ≥ ${RPS_HOT_LINE}`, type: "line", data: hot, xAxisIndex: 2, yAxisIndex: 2,
             smooth: false, showSymbol: false, connectNulls: false,
-            lineStyle: { width: 1.8, color: RPS_COLOR.hot, cap: "round", join: "round" }, z: 5,
+            lineStyle: { width: 1.8, color: chartColors.rps.hot, cap: "round", join: "round" }, z: 5,
             legendHoverLink: false },
         );
       }
@@ -282,7 +284,7 @@ export function StockKline() {
       animation: false,
       legend: {
         top: 4, left: "center",
-        textStyle: { color: "#94a3b8", fontSize: 11 },
+        textStyle: { color: chartColors.text, fontSize: 11 },
         data: legendData,
       },
       tooltip: {
@@ -364,11 +366,11 @@ export function StockKline() {
         { type: "slider", xAxisIndex: xAxisIndices, bottom: 6, height: 18,
           startValue: defaultStartValue, endValue: series.dates.length - 1,
           borderColor: "#334155", fillerColor: "rgba(99,102,241,0.18)",
-          handleStyle: { color: "#6366f1" }, textStyle: { color: "#94a3b8", fontSize: 10 } },
+          handleStyle: { color: "#6366f1" }, textStyle: { color: chartColors.text, fontSize: 10 } },
       ],
       series: dataSeries,
     }, { notMerge: true });
-  }, [series]);
+  }, [series, chartColors]);
 
   const last = bars && bars.length ? bars[bars.length - 1] : null;
   const prev = bars && bars.length > 1 ? bars[bars.length - 2] : null;
@@ -394,7 +396,7 @@ export function StockKline() {
       <div className="mb-3 flex items-center gap-2">
         <button
           onClick={() => navigate(-1)}
-          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-black/20 px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
+          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-surface-2/55 dark:bg-black/20 px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/40 hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> 返回
         </button>
@@ -433,7 +435,7 @@ export function StockKline() {
               <span className="text-sm text-muted-foreground">{loading ? "加载中…" : "—"}</span>
             )}
           </div>
-          <div className="flex rounded-lg bg-black/20 p-1 text-xs">
+          <div className="flex rounded-lg bg-surface-2/55 dark:bg-black/20 p-1 text-xs">
             {FREQ_OPTIONS.map((o) => (
               <button key={o.value}
                 onClick={() => setFreq(o.value)}
