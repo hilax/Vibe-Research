@@ -2,9 +2,13 @@ import raw from "./sectors.json";
 import { aiComputingSector } from "./aiComputing";
 import { biopharmaSector } from "./biopharma";
 import { businessSpaceSector } from "./businessSpace";
+import { digitalNodeDetails, digitalSectors } from "./sectorExpansionDigital";
+import { industryNodeDetails, industrySectors } from "./sectorExpansionIndustry";
+import { techNodeDetails, techSectors } from "./sectorExpansionTech";
 import { hbmSector } from "./hbm";
 import { opticalSector } from "./optical";
 import { sectorNodeDetails, type CoreNodeDetail } from "./sectorNodeDetails";
+import { researchedSectorNodeDetails } from "./sectorNodeDetailsResearched";
 
 export type { CoreNodeDetail } from "./sectorNodeDetails";
 
@@ -200,6 +204,7 @@ export interface Sector {
   verified: boolean;
   nodes: string[];
   nodeDetails?: Record<string, CoreNodeDetail>;
+  sources?: { label: string; url: string; date?: string }[];
   tags?: Tag[];
 }
 
@@ -213,15 +218,24 @@ const rawData = raw as SectorsFile;
 
 // 大型研究板块使用独立、可持续更新的数据集；保留 sectors.json 中的板块顺序，
 // 仅在运行时替换通用索引中的对应条目，避免把研究底稿塞回导航索引。
-const researchSectors = new Map(
-  [aiComputingSector, hbmSector, opticalSector, businessSpaceSector, biopharmaSector].map((sector) => [sector.key, sector]),
+const researchSectors = new Map<string, Sector>(
+  [aiComputingSector, hbmSector, opticalSector, businessSpaceSector, biopharmaSector, ...digitalSectors, ...techSectors, ...industrySectors]
+    .map((sector): [string, Sector] => [sector.key, sector]),
 );
+
+const allNodeDetails: Record<string, Record<string, CoreNodeDetail>> = {
+  ...sectorNodeDetails,
+  ...researchedSectorNodeDetails,
+  ...digitalNodeDetails,
+  ...techNodeDetails,
+  ...industryNodeDetails,
+};
 
 export const sectorsData: SectorsFile = {
   ...rawData,
   sectors: rawData.sectors.map((sector) => {
     const resolvedSector = researchSectors.get(sector.key) ?? sector;
-    const nodeDetails = sectorNodeDetails[resolvedSector.key];
+    const nodeDetails = allNodeDetails[resolvedSector.key];
     return nodeDetails ? { ...resolvedSector, nodeDetails } : resolvedSector;
   }),
 };

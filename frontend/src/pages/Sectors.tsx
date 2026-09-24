@@ -12,7 +12,7 @@ export function Sectors() {
     <div>
       <PageHeader
         title="板块中心"
-        subtitle={`${sectors.length} 个热门赛道的产业链骨架 · 只有环节，不含标的`}
+        subtitle={`${sectors.length} 个赛道的产业链环节 · 只有环节，不含标的`}
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -42,7 +42,7 @@ export function Sectors() {
       </div>
 
       <p className="mt-4 text-center text-xs text-muted-foreground/60">
-        共 {sectors.length} 个板块，其中 {hotCount} 个热门 · 环节持续实时核实补全
+        共 {sectors.length} 个板块，其中 {hotCount} 个热门 · 环节资料与跟踪指标见各板块页面
       </p>
     </div>
   );

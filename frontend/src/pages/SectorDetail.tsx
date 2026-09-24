@@ -83,6 +83,24 @@ export function SectorDetail() {
         </GlassCard>
       )}
 
+      {sector.sources?.length ? (
+        <section className="mt-6" aria-label="环节资料来源">
+          <h3 className="mb-2 text-sm font-semibold text-muted-foreground">环节资料来源</h3>
+          <GlassCard className="!p-4">
+            <ul className="space-y-2 text-xs leading-relaxed">
+              {sector.sources.map((source) => (
+                <li key={source.url}>
+                  <a href={source.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                    {source.label}
+                  </a>
+                  {source.date ? <span className="ml-2 text-muted-foreground">{source.date}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </GlassCard>
+        </section>
+      ) : null}
+
       {sector.tags?.length ? (
         <section className="mt-8">
           <h3 className="mb-3 text-sm font-semibold text-muted-foreground">
