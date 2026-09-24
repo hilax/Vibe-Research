@@ -70,8 +70,8 @@ const NODE_HINT: Record<string, string[]> = {
   "dexterous-hand": ["灵巧手", "六维力传感器", "具身大模型"],
 };
 
-function relevantNodesHint(tagKey: string, allNodes: string[]): string {
-  const hinted = NODE_HINT[tagKey];
+function relevantNodesHint(sectorKey: string, tagKey: string, allNodes: string[]): string {
+  const hinted = sectorKey === "humanoid" ? NODE_HINT[tagKey] : undefined;
   if (hinted?.length) return hinted.join("、");
   return `（全部节点：${allNodes.join("、")}）`;
 }
@@ -111,7 +111,14 @@ export function SectorTagDetail() {
           `把「${tag.label}」的技术、客户、产能和财务证据分开`,
           `未来12个月「${tag.label}」最应跟踪哪些催化剂和风险`,
         ]
-      : SUGGESTIONS_BY_TAG[tag.key] ?? [];
+      : sector.key === "humanoid"
+        ? SUGGESTIONS_BY_TAG[tag.key] ?? []
+        : [
+            `「${tag.label}」包含哪些产业环节，各自解决什么问题`,
+            `用公开来源核对「${tag.label}」目前可验证的进展`,
+            `「${tag.label}」应跟踪哪些具体指标和验证节点`,
+            `「${tag.label}」还有哪些技术或落地边界`,
+          ];
 
   const aiContextParts = [
     `板块：${sector.label}`,
@@ -119,8 +126,11 @@ export function SectorTagDetail() {
     `栏目：${tag.label}（key=${tag.key}）`,
     `栏目定位：${tag.description}`,
     `全板块的产业链环节：` + (sector.nodes.length ? sector.nodes.join("、") : "（环节梳理中）"),
-    `相关节点提示：` + relevantNodesHint(tag.key, sector.nodes),
+    `相关节点提示：` + relevantNodesHint(sector.key, tag.key, sector.nodes),
   ];
+  if (sector.sources?.length) {
+    aiContextParts.push("公开资料来源：" + sector.sources.map((source) => `${source.label} ${source.url}`).join("；"));
+  }
   if (!tag.verified) {
     aiContextParts.push(
       `⚠ 内容状态：${tag.label} 栏目骨架尚未核实，请按"先列提纲 + 缺数据节点反问"的方式回答；不要伪造研报/标的/比例数字。`,

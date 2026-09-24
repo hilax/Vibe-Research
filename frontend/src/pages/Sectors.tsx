@@ -32,7 +32,10 @@ export function Sectors() {
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3 text-xs">
                 <span className="text-muted-foreground">
-                  {s.verified ? `${s.nodes.length} 个环节` : "环节梳理中"}
+                  {s.tags?.length ? (
+                    <span className="text-primary/90 font-medium mr-1.5">{s.tags.length} 栏目 ·</span>
+                  ) : null}
+                  {s.verified ? `${s.nodes.length} 环节` : "环节梳理中"}
                 </span>
                 <ChevronRight className="h-4 w-4 text-primary" />
               </div>

@@ -2,6 +2,9 @@ import raw from "./sectors.json";
 import { aiComputingSector } from "./aiComputing";
 import { biopharmaSector } from "./biopharma";
 import { businessSpaceSector } from "./businessSpace";
+import { digitalSectorColumns } from "./sectorColumnsDigital";
+import { industrySectorColumns } from "./sectorColumnsIndustry";
+import { techSectorColumns } from "./sectorColumnsTech";
 import { digitalNodeDetails, digitalSectors } from "./sectorExpansionDigital";
 import { industryNodeDetails, industrySectors } from "./sectorExpansionIndustry";
 import { techNodeDetails, techSectors } from "./sectorExpansionTech";
@@ -231,11 +234,22 @@ const allNodeDetails: Record<string, Record<string, CoreNodeDetail>> = {
   ...industryNodeDetails,
 };
 
+const allSectorColumns: Record<string, Tag[]> = {
+  ...digitalSectorColumns,
+  ...techSectorColumns,
+  ...industrySectorColumns,
+};
+
 export const sectorsData: SectorsFile = {
   ...rawData,
   sectors: rawData.sectors.map((sector) => {
     const resolvedSector = researchSectors.get(sector.key) ?? sector;
     const nodeDetails = allNodeDetails[resolvedSector.key];
-    return nodeDetails ? { ...resolvedSector, nodeDetails } : resolvedSector;
+    const tags = allSectorColumns[resolvedSector.key] ?? resolvedSector.tags;
+    return {
+      ...resolvedSector,
+      ...(nodeDetails ? { nodeDetails } : {}),
+      ...(tags ? { tags } : {}),
+    };
   }),
 };

@@ -31,6 +31,9 @@ export function SectorDetail() {
         .join(""),
     );
   }
+  if (sector.sources?.length) {
+    aiContextParts.push("环节资料来源：" + sector.sources.map((source) => `${source.label} ${source.url}`).join("；"));
+  }
   const aiContext = aiContextParts.join("\n");
   const suggestions = sector.key === "ai-pharma"
     ? ["按人体证据重排研究优先级", "当前最重要的临床催化剂", "哪些技术路线仍未验证", "全球硬卡口与国产替代分开看"]

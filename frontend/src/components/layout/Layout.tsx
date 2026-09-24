@@ -4,7 +4,7 @@ import {
   Activity, Radar, LayoutGrid, Wallet, Settings, Search, NotebookPen,
   EyeOff, Palette, ChevronsLeft, ChevronsRight, LineChart,
   Cog, Cpu, Database, Cable, Rocket, FlaskConical, Star, FileText,
-  SlidersHorizontal, BarChart3,
+  SlidersHorizontal, BarChart3, Plane, Car, Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMarketPalette } from "@/hooks/useMarketPalette";
@@ -52,6 +52,10 @@ const NAV_GROUPS = [
 const SECTOR_LINKS = [
   { to: "/sectors/humanoid", icon: Cog, label: "人形机器人" },
   { to: "/sectors/ai-computing", icon: Cpu, label: "AI 算力" },
+  { to: "/sectors/low-altitude", icon: Plane, label: "低空经济" },
+  { to: "/sectors/semiconductor", icon: Cpu, label: "半导体替代" },
+  { to: "/sectors/solid-state-battery", icon: Zap, label: "固态电池" },
+  { to: "/sectors/smart-driving", icon: Car, label: "智能驾驶" },
   { to: "/sectors/hbm", icon: Database, label: "HBM" },
   { to: "/sectors/cpo", icon: Cable, label: "光互联" },
   { to: "/sectors/business-space", icon: Rocket, label: "商业航天" },
