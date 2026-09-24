@@ -66,12 +66,12 @@ claude mcp add vibe-research -- \
 
 ### 完整 A 股数据工具箱（随仓库自带）
 
-MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需要更全的 A 股数据（龙虎榜 / 融资融券 / 大宗交易 / 股东户数 / 分红 / 资金流 / 解禁 / 概念板块 / 打板情绪 / ETF 期权 / 互动易 / 全市场行业排名 …共 **40 个端点**），本仓库根目录**自带完整数据源** [`a-stock-data/`](../a-stock-data/SKILL.md)（a-stock-data v3.3）：
+MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需要更全的 A 股及相关市场数据（龙虎榜 / 融资融券 / 大宗交易 / 股东户数 / 分红 / 资金流 / 解禁 / 概念板块 / 打板情绪 / ETF 期权 / 互动易 / 宏观利率 / 期货 / 可转债等，共 **87 个能力入口**），本仓库根目录**自带独立数据源快照** [`a-stock-data/`](../a-stock-data/SKILL.md)（a-stock-data v3.10.0）：
 
-- 要调哪个接口，直接看 [`a-stock-data/SKILL.md`](../a-stock-data/SKILL.md)——每个端点都有 copy-paste 即用的代码（内嵌全部调用逻辑，零第三方数据封装依赖，东财接口已内置限流防封）。
-- 运行依赖：`pip install mootdx requests pandas stockstats`（自包含，v3.0 起已移除 akshare）。
+- 要调哪个接口，直接看 [`a-stock-data/SKILL.md`](../a-stock-data/SKILL.md)——内嵌端点调用代码，东财接口已内置限流；除 `mootdx` 与 `baostock` 的 TCP 能力外，数据源走直连 HTTP API。
+- 运行依赖：`pip install mootdx requests pandas stockstats numpy baostock xlrd openpyxl`（按所用端点安装；详见 Skill 的依赖说明）。
 - 上游与更新：[github.com/simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data)（不更新也能一直用，自带的是固定可用快照）。
-- 分工：**MCP 4 工具** = 网页 / 轻量常用；**自带数据源 40+ 端点** = agent 深度自助调研的全量工具箱。二者同源，按需取用。
+- 分工：**MCP 4 工具** = 网页 / 轻量常用；**独立 Skill 87 个能力入口** = agent 按需取数的工具箱。Skill 的新入口并未自动集成到本项目后端。
 
 ## 合规
 
