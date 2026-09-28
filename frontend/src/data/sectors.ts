@@ -2,9 +2,7 @@ import raw from "./sectors.json";
 import { aiComputingSector } from "./aiComputing";
 import { biopharmaSector } from "./biopharma";
 import { businessSpaceSector } from "./businessSpace";
-import { digitalSectorColumns } from "./sectorColumnsDigital";
-import { industrySectorColumns } from "./sectorColumnsIndustry";
-import { techSectorColumns } from "./sectorColumnsTech";
+import { verifiedSectorColumns } from "./sectorColumnsVerified";
 import { digitalNodeDetails, digitalSectors } from "./sectorExpansionDigital";
 import { industryNodeDetails, industrySectors } from "./sectorExpansionIndustry";
 import { techNodeDetails, techSectors } from "./sectorExpansionTech";
@@ -235,9 +233,7 @@ const allNodeDetails: Record<string, Record<string, CoreNodeDetail>> = {
 };
 
 const allSectorColumns: Record<string, Tag[]> = {
-  ...digitalSectorColumns,
-  ...techSectorColumns,
-  ...industrySectorColumns,
+  ...verifiedSectorColumns,
 };
 
 export const sectorsData: SectorsFile = {
