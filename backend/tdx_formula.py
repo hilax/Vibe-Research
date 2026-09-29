@@ -1322,22 +1322,37 @@ class _Evaluator:
                     positions.append(index)
                 result.append(index - positions[0] if positions else None)
             return result
+        # Dynamic periods can grow again after shrinking, so a rolling deque
+        # cannot discard old positions. Build a sparse table for arbitrary ranges
+        # instead of rescanning and normalizing every value in every window.
+        missing = (-math.inf, -1)
+        numeric = [_finite_number(value) for value in values]
+        extrema = [
+            (value if highest else -value, index) if value is not None else missing
+            for index, value in enumerate(numeric)
+        ]
+        table = [extrema]
+        width = 2
+        while width <= len(values):
+            previous = table[-1]
+            half = width // 2
+            table.append([
+                max(previous[start], previous[start + half])
+                for start in range(len(values) - width + 1)
+            ])
+            width *= 2
+
         result = []
         for index, period_value in enumerate(periods):
             period = self._period(period_value, expression)
             start = self._window_start(index, period)
-            candidates = [
-                (position, _finite_number(values[position]))
-                for position in range(start, index + 1)
-            ]
-            candidates = [(position, value) for position, value in candidates if value is not None]
-            if not candidates:
-                result.append(None)
-                continue
-            extreme = (max if highest else min)(value for _, value in candidates)
-            # TongdaXin uses the most recent bar when the extreme is tied.
-            position = max(position for position, value in candidates if value == extreme)
-            result.append(index - position)
+            window_size = index - start + 1
+            level = window_size.bit_length() - 1
+            width = 1 << level
+            # The position breaks ties in favor of the most recent bar, matching
+            # TongdaXin for both HHVBARS and LLVBARS. Missing-only ranges use -1.
+            _, position = max(table[level][start], table[level][index - width + 1])
+            result.append(index - position if position >= 0 else None)
         return result
 
     def _bars_since_n(

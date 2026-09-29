@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
 import quant
 import tdx_formula
 import tdx_presets
+
+
+@pytest.fixture(autouse=True)
+def offline_trade_date(monkeypatch):
+    monkeypatch.setattr(quant, "_latest_tdx_date", lambda: "2026-09-18")
 
 
 def _bars(count: int = 250, latest: float = 96) -> list[dict]:
@@ -85,7 +91,7 @@ def test_tdx_validate_api_and_structured_error():
 
 def test_direct_tdx_source_changes_real_screen_result(monkeypatch):
     monkeypatch.setattr(quant, "base_pool", lambda *args, **kwargs: _base_pool())
-    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset: _bars(offset))
+    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset, **kwargs: _bars(offset))
 
     matched = quant.run_screen(strategy="near_high", formula_source="XG:C>95;")
     rejected = quant.run_screen(strategy="near_high", formula_source="XG:C>97;")
@@ -94,6 +100,36 @@ def test_direct_tdx_source_changes_real_screen_result(monkeypatch):
     assert rejected["matched_count"] == 0
     assert matched["criteria"]["formula_source"] == "XG:C>95;"
     assert matched["criteria"]["formula_hash"] != rejected["criteria"]["formula_hash"]
+
+
+def test_screen_reuses_one_trade_date_and_separates_loading_from_evaluation(monkeypatch):
+    monkeypatch.setattr(quant, "base_pool", lambda *args, **kwargs: _base_pool())
+    probes = []
+    downloads = []
+    events = []
+
+    def trade_date():
+        probes.append(True)
+        return "2026-09-18"
+
+    def load(code, offset, *, target_date):
+        downloads.append(target_date)
+        return _bars(offset)
+
+    monkeypatch.setattr(quant, "_latest_tdx_date", trade_date)
+    monkeypatch.setattr(quant, "_daily_bar_records", load)
+    result = quant.run_screen(
+        strategy="near_high", formula_source="XG:C>95;",
+        progress_cb=lambda *event: events.append(event),
+    )
+
+    assert probes == [True]
+    assert downloads == ["2026-09-18"]
+    assert result["matched_count"] == 1
+    bars_done = next(i for i, event in enumerate(events) if event[:3] == ("bars", 1, 1))
+    evaluate_start = next(i for i, event in enumerate(events) if event[:3] == ("evaluate", 0, 1))
+    assert bars_done < evaluate_start
+    assert events[-1][:3] == ("evaluate", 1, 1)
 
 
 def test_presets_compile_and_growth_history_is_practical():
@@ -127,7 +163,7 @@ def test_rps_history_is_aligned_to_bar_dates():
 
 def test_growth_source_uses_rps_capital_and_finance_context(monkeypatch):
     monkeypatch.setattr(quant, "base_pool", lambda *args, **kwargs: _base_pool())
-    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset: _growth_bars(offset))
+    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset, **kwargs: _growth_bars(offset))
     monkeypatch.setattr(quant, "_batch_quotes", lambda codes: {"600000": {"turnover_pct": 1.0}})
     monkeypatch.setattr(quant, "rps_snapshot", lambda: {
         "trade_date": "2026-07-17", "universe_count": 4000, "eligible_count": 3500,

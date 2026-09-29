@@ -1,5 +1,7 @@
 """日 K 本地缓存与选股加速测试。"""
 import time
+import pickle
+import sqlite3
 import pytest
 
 import bars_cache
@@ -46,10 +48,65 @@ def test_put_and_get_daily_bars():
     insufficient = bars_cache.get_daily_bars("600519", min_bars=300, target_date="2026-09-18")
     assert insufficient is None
 
-    # 日期落后且超过 8 小时时不应命中
+    # 尚未核对下一个交易日的数据，刚写入的旧历史也不能冒充新行情。
     stale = bars_cache.get_daily_bars("600519", min_bars=250, target_date="2026-09-19")
-    # 因为刚刚写入（updated_at < 8h），视为目标日停牌/最新可用，允许命中
-    assert stale is not None
+    assert stale is None
+
+
+def test_suspended_stock_only_reuses_explicitly_checked_trade_date():
+    bars = _make_bars(260, "2026-09-17")
+    bars_cache.put_daily_bars("600519", bars, target_date="2026-09-18")
+    assert bars_cache.get_daily_bars("600519", 250, "2026-09-18") == bars
+    assert bars_cache.get_daily_bars("600519", 250, "2026-09-19") is None
+    assert bars_cache.get_stale_daily_bars("600519") == bars
+
+
+def test_complete_short_history_is_reusable_but_not_stale():
+    bars = _make_bars(260, "2026-09-18")
+    bars_cache.put_daily_bars("600519", bars, target_date="2026-09-18", history_complete=True)
+    with bars_cache._MEM_LOCK:
+        bars_cache._MEM_CACHE.clear()
+    assert bars_cache.prefetch_daily_bars(["600519"], 800, "2026-09-18") == 1
+    assert bars_cache.get_daily_bars("600519", 800, "2026-09-18") == bars
+    assert bars_cache.get_daily_bars("600519", 800, "2026-09-19") is None
+
+
+def test_intraday_expiry_and_after_close_refresh(monkeypatch):
+    from datetime import datetime
+
+    now = datetime(2026, 9, 18, 14, 0).timestamp()
+    original_strftime = time.strftime
+
+    def frozen_strftime(fmt, value=None):
+        return original_strftime(fmt, time.localtime(now) if value is None else value)
+
+    monkeypatch.setattr(time, "time", lambda: now)
+    monkeypatch.setattr(time, "strftime", frozen_strftime)
+    valid = bars_cache._is_valid_cache
+    # 停牌股票末根仍是昨天，也必须按今天的盘中刷新规则处理。
+    assert valid("2026-09-17", 800, now - 299, 800, "2026-09-18", "2026-09-18")
+    assert not valid("2026-09-17", 800, now - 301, 800, "2026-09-18", "2026-09-18")
+    before_close = now
+    now = datetime(2026, 9, 18, 15, 6).timestamp()
+    assert not valid("2026-09-18", 800, before_close, 800, "2026-09-18", "2026-09-18")
+    assert valid("2026-09-18", 800, now, 800, "2026-09-18", "2026-09-18")
+
+
+def test_existing_sqlite_cache_migrates_without_losing_history(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "legacy"
+    cache_dir.mkdir()
+    monkeypatch.setenv("VR_BARS_CACHE_DIR", str(cache_dir))
+    bars = _make_bars(800, "2026-09-18")
+    with sqlite3.connect(str(cache_dir / "daily_bars.db")) as conn:
+        conn.execute(
+            "CREATE TABLE daily_bars (code TEXT PRIMARY KEY, latest_date TEXT NOT NULL, "
+            "bar_count INTEGER NOT NULL, updated_at REAL NOT NULL, data BLOB NOT NULL)"
+        )
+        conn.execute("INSERT INTO daily_bars VALUES (?, ?, ?, ?, ?)",
+                     ("600519", "2026-09-18", 800, time.time(), pickle.dumps(bars)))
+    assert bars_cache.get_daily_bars("600519", 800, "2026-09-18") == bars
+    assert bars_cache.get_daily_bars("600519", 800, "2026-09-19") is None
+    assert bars_cache.get_stale_daily_bars("600519") == bars
 
 
 def test_batch_prefetch_and_put():

@@ -18,9 +18,11 @@ from typing import Any
 _DB_LOCK = threading.Lock()
 _MEM_LOCK = threading.Lock()
 
-# 内存一级缓存: code -> (latest_date, count, updated_at, bars)
-_MEM_CACHE: dict[str, tuple[str, int, float, list[dict]]] = {}
+# checked_date 记录实际向数据源核对过的交易日，history_complete 表示已取得全部上市历史。
+# 内存一级缓存: code -> (latest_date, count, updated_at, checked_date, history_complete, bars)
+_MEM_CACHE: dict[str, tuple[str, int, float, str, bool, list[dict]]] = {}
 _SHARED_CONN: sqlite3.Connection | None = None
+_SHARED_DB_PATH: Path | None = None
 
 
 def get_bars_cache_dir() -> Path:
@@ -39,11 +41,15 @@ def get_db_path() -> Path:
 
 
 def _get_connection() -> sqlite3.Connection:
-    global _SHARED_CONN
+    global _SHARED_CONN, _SHARED_DB_PATH
     with _DB_LOCK:
-        if _SHARED_CONN is not None:
-            return _SHARED_CONN
         db_path = get_db_path()
+        if _SHARED_CONN is not None and _SHARED_DB_PATH == db_path:
+            return _SHARED_CONN
+        if _SHARED_CONN is not None:
+            _SHARED_CONN.close()
+            with _MEM_LOCK:
+                _MEM_CACHE.clear()
         conn = sqlite3.connect(
             str(db_path),
             check_same_thread=False,
@@ -62,8 +68,14 @@ def _get_connection() -> sqlite3.Connection:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bars_latest_date ON daily_bars(latest_date)")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_bars)")}
+        if "checked_date" not in columns:
+            conn.execute("ALTER TABLE daily_bars ADD COLUMN checked_date TEXT NOT NULL DEFAULT ''")
+        if "history_complete" not in columns:
+            conn.execute("ALTER TABLE daily_bars ADD COLUMN history_complete INTEGER NOT NULL DEFAULT 0")
         conn.commit()
         _SHARED_CONN = conn
+        _SHARED_DB_PATH = db_path
         return _SHARED_CONN
 
 
@@ -80,16 +92,18 @@ def _is_valid_cache(
     updated_at: float,
     min_bars: int,
     target_date: str | None,
+    checked_date: str = "",
+    history_complete: bool = False,
 ) -> bool:
     """判定缓存记录是否满足请求条件。"""
-    if count < min_bars:
+    if count < min_bars and not history_complete:
         return False
 
     now = time.time()
     today_str = time.strftime("%Y-%m-%d")
 
     # 如果缓存记录包含今天的日期（当天数据在交易时段或收盘前后会动态变动）：
-    if latest_date == today_str:
+    if latest_date == today_str or checked_date == today_str:
         curr_hm = time.strftime("%H:%M")
         update_hm = time.strftime("%H:%M", time.localtime(updated_at))
         update_date = time.strftime("%Y-%m-%d", time.localtime(updated_at))
@@ -97,15 +111,15 @@ def _is_valid_cache(
         if curr_hm >= "15:05" and (update_date < today_str or update_hm < "15:05"):
             return False
         # 2) 如果在盘中交易时段（09:30 ~ 15:00），且缓存已超过 5 分钟，需拉取最新价格
-        if "09:30" <= curr_hm <= "15:00" and (now - updated_at > 300):
+        if "09:30" <= curr_hm < "15:05" and (now - updated_at > 300):
             return False
 
     if target_date:
         if latest_date >= target_date:
             return True
-        # 若最新日期早于 target_date，但本次更新发生在近 8 小时内，
-        # 说明该股在 target_date 为停牌/未交易状态，通达信返回的就是此最新数据，无需反复重下。
-        if now - updated_at < 8 * 3600:
+        # 只有确实向数据源核对过目标交易日，才能将较旧的末根认作停牌。
+        # 昨晚的缓存不能因为写入未满 8 小时而误当成今天的新数据。
+        if checked_date >= target_date:
             return True
         return False
 
@@ -136,8 +150,8 @@ def prefetch_daily_bars(
         for code in codes:
             entry = _MEM_CACHE.get(code)
             if entry is not None:
-                latest_date, count, updated_at, _ = entry
-                if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date):
+                latest_date, count, updated_at, checked_date, history_complete, _ = entry
+                if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date, checked_date, history_complete):
                     hits += 1
                     continue
             missing_codes.append(code)
@@ -148,7 +162,7 @@ def prefetch_daily_bars(
     # 从 SQLite 批量加载缺失的股票（按 500 个一批分片避免 SQL 变量超限）
     conn = _get_connection()
     chunk_size = 500
-    loaded_items: list[tuple[str, str, int, float, list[dict]]] = []
+    loaded_items: list[tuple[str, str, int, float, str, bool, list[dict]]] = []
 
     with _DB_LOCK:
         for i in range(0, len(missing_codes), chunk_size):
@@ -156,23 +170,23 @@ def prefetch_daily_bars(
             placeholders = ",".join(["?"] * len(chunk))
             cursor = conn.cursor()
             cursor.execute(
-                f"SELECT code, latest_date, bar_count, updated_at, data "
+                f"SELECT code, latest_date, bar_count, updated_at, checked_date, history_complete, data "
                 f"FROM daily_bars WHERE code IN ({placeholders})",
                 chunk,
             )
             rows = cursor.fetchall()
-            for code, latest_date, count, updated_at, data in rows:
-                if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date):
+            for code, latest_date, count, updated_at, checked_date, history_complete, data in rows:
+                if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date, checked_date, bool(history_complete)):
                     try:
                         bars = pickle.loads(data)
-                        loaded_items.append((code, latest_date, count, updated_at, bars))
+                        loaded_items.append((code, latest_date, count, updated_at, checked_date, bool(history_complete), bars))
                     except Exception:  # noqa: BLE001
                         pass
 
     if loaded_items:
         with _MEM_LOCK:
-            for code, latest_date, count, updated_at, bars in loaded_items:
-                _MEM_CACHE[code] = (latest_date, count, updated_at, bars)
+            for code, latest_date, count, updated_at, checked_date, history_complete, bars in loaded_items:
+                _MEM_CACHE[code] = (latest_date, count, updated_at, checked_date, history_complete, bars)
                 hits += 1
 
     return hits
@@ -187,8 +201,8 @@ def get_daily_bars(
     with _MEM_LOCK:
         entry = _MEM_CACHE.get(code)
         if entry is not None:
-            latest_date, count, updated_at, bars = entry
-            if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date):
+            latest_date, count, updated_at, checked_date, history_complete, bars = entry
+            if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date, checked_date, history_complete):
                 return bars
 
     # 查 SQLite
@@ -196,18 +210,18 @@ def get_daily_bars(
     with _DB_LOCK:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT latest_date, bar_count, updated_at, data FROM daily_bars WHERE code = ?",
+            "SELECT latest_date, bar_count, updated_at, checked_date, history_complete, data FROM daily_bars WHERE code = ?",
             (code,),
         )
         row = cursor.fetchone()
 
     if row is not None:
-        latest_date, count, updated_at, data = row
-        if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date):
+        latest_date, count, updated_at, checked_date, history_complete, data = row
+        if _is_valid_cache(latest_date, count, updated_at, min_bars, target_date, checked_date, bool(history_complete)):
             try:
                 bars = pickle.loads(data)
                 with _MEM_LOCK:
-                    _MEM_CACHE[code] = (latest_date, count, updated_at, bars)
+                    _MEM_CACHE[code] = (latest_date, count, updated_at, checked_date, bool(history_complete), bars)
                 return bars
             except Exception:  # noqa: BLE001
                 pass
@@ -215,10 +229,48 @@ def get_daily_bars(
     return None
 
 
+def get_stale_daily_bars(code: str) -> list[dict] | None:
+    """读取已有历史供增量合并；返回值不能直接作为最新行情使用。"""
+    with _MEM_LOCK:
+        entry = _MEM_CACHE.get(code)
+        if entry is not None:
+            return entry[-1]
+    conn = _get_connection()
+    with _DB_LOCK:
+        row = conn.execute(
+            "SELECT latest_date, bar_count, updated_at, checked_date, history_complete, data "
+            "FROM daily_bars WHERE code = ?", (code,),
+        ).fetchone()
+    if row is None:
+        return None
+    latest_date, count, updated_at, checked_date, history_complete, data = row
+    try:
+        bars = pickle.loads(data)
+    except Exception:  # noqa: BLE001
+        return None
+    with _MEM_LOCK:
+        _MEM_CACHE[code] = (latest_date, count, updated_at, checked_date, bool(history_complete), bars)
+    return bars
+
+
+def is_daily_history_complete(code: str) -> bool:
+    """是否已确认拿到该股全部上市历史，用于短历史的增量更新。"""
+    with _MEM_LOCK:
+        entry = _MEM_CACHE.get(code)
+        if entry is not None:
+            return entry[4]
+    conn = _get_connection()
+    with _DB_LOCK:
+        row = conn.execute("SELECT history_complete FROM daily_bars WHERE code = ?", (code,)).fetchone()
+    return bool(row and row[0])
+
+
 def put_daily_bars(
     code: str,
     bars: list[dict],
     target_date: str | None = None,
+    *,
+    history_complete: bool = False,
 ) -> None:
     """保存单只股票的日 K 到内存与 SQLite。"""
     if not bars:
@@ -227,17 +279,18 @@ def put_daily_bars(
     latest_date = _extract_bar_date(bars[-1]) or (target_date or "")
     count = len(bars)
     now = time.time()
+    checked_date = target_date or latest_date
     data = pickle.dumps(bars, protocol=5)
 
     with _MEM_LOCK:
-        _MEM_CACHE[code] = (latest_date, count, now, bars)
+        _MEM_CACHE[code] = (latest_date, count, now, checked_date, history_complete, bars)
 
     conn = _get_connection()
     with _DB_LOCK:
         conn.execute(
-            "INSERT OR REPLACE INTO daily_bars (code, latest_date, bar_count, updated_at, data) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (code, latest_date, count, now, data),
+            "INSERT OR REPLACE INTO daily_bars (code, latest_date, bar_count, updated_at, checked_date, history_complete, data) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (code, latest_date, count, now, checked_date, int(history_complete), data),
         )
         conn.commit()
 
@@ -251,7 +304,7 @@ def put_daily_bars_batch(
         return
 
     now = time.time()
-    db_rows: list[tuple[str, str, int, float, bytes]] = []
+    db_rows: list[tuple[str, str, int, float, str, int, bytes]] = []
 
     with _MEM_LOCK:
         for code, bars in items:
@@ -259,16 +312,19 @@ def put_daily_bars_batch(
                 continue
             latest_date = _extract_bar_date(bars[-1]) or (target_date or "")
             count = len(bars)
-            _MEM_CACHE[code] = (latest_date, count, now, bars)
+            existing = _MEM_CACHE.get(code)
+            history_complete = bool(existing and existing[4] and len(bars) >= existing[1])
+            checked_date = target_date or latest_date
+            _MEM_CACHE[code] = (latest_date, count, now, checked_date, history_complete, bars)
             data = pickle.dumps(bars, protocol=5)
-            db_rows.append((code, latest_date, count, now, data))
+            db_rows.append((code, latest_date, count, now, checked_date, int(history_complete), data))
 
     if db_rows:
         conn = _get_connection()
         with _DB_LOCK:
             conn.executemany(
-                "INSERT OR REPLACE INTO daily_bars (code, latest_date, bar_count, updated_at, data) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO daily_bars (code, latest_date, bar_count, updated_at, checked_date, history_complete, data) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 db_rows,
             )
             conn.commit()
@@ -276,16 +332,12 @@ def put_daily_bars_batch(
 
 def clear_bars_cache() -> None:
     """清空日 K 缓存（用于测试与重置）。"""
-    global _SHARED_CONN
+    conn = _get_connection()
     with _MEM_LOCK:
         _MEM_CACHE.clear()
     with _DB_LOCK:
-        if _SHARED_CONN is not None:
-            try:
-                _SHARED_CONN.execute("DELETE FROM daily_bars")
-                _SHARED_CONN.commit()
-            except Exception:  # noqa: BLE001
-                pass
+        conn.execute("DELETE FROM daily_bars")
+        conn.commit()
 
 
 def get_cache_stats() -> dict[str, Any]:

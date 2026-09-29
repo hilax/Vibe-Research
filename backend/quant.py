@@ -71,6 +71,8 @@ _RPS_PREWARM_STATE: dict[str, Any] = {
     "runs_failed": 0,           # 累计失败次数
 }
 _RPS_PREWARM_LOCK = threading.Lock()
+_RPS_SNAPSHOT_LOCK = threading.Lock()
+_LATEST_TDX_DATE_LOCK = threading.Lock()
 
 
 def get_rps_prewarm_status() -> dict:
@@ -117,10 +119,16 @@ def trigger_rps_prewarm() -> threading.Thread | None:
     with _RPS_PREWARM_LOCK:
         if _RPS_PREWARM_STATE["running"]:
             return None
+        # 在启动线程前占位，避免两个调用方在同一时刻重复启动预热。
+        _RPS_PREWARM_STATE.update(running=True, started_at=time.time(), last_error=None)
     thread = threading.Thread(
         target=_prewarm_rps_sync, name="rps-prewarm", daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        _set_rps_prewarm(running=False)
+        raise
     return thread
 
 
@@ -215,6 +223,9 @@ def _json(url: str, params: dict, timeout: int = 25) -> dict:
     response = astock.em_get(url, params=params, headers=_HEADERS, timeout=timeout)
     response.raise_for_status()
     payload = response.json()
+    # 基金接口对尚未披露的报告期返回 []，这是“无数据”，需继续查找上一报告期。
+    if url == _FUND_URL and isinstance(payload, list) and not payload:
+        return {"data": [], "pages": 0}
     if not isinstance(payload, dict):
         raise QuantDataError("数据源返回了无法识别的格式")
     return payload
@@ -614,12 +625,20 @@ def _latest_tdx_date() -> str:
     cached = _cache_get(key, 60)
     if cached:
         return cached
-    frame = astock._mootdx_client().bars(symbol="600519", frequency=4, offset=2)
-    if frame is None or frame.empty:
-        raise QuantDataError("通达信未返回基准股票日 K，无法确定 RPS 日期")
-    date_str = str(frame.iloc[-1].get("datetime") or "")[:10]
-    _cache_put(key, date_str)
-    return date_str
+    with _LATEST_TDX_DATE_LOCK:
+        cached = _cache_get(key, 60)
+        if cached:
+            return cached
+        frame = _thread_client().bars(symbol="600519", frequency=4, offset=2)
+        if frame is None or frame.empty:
+            raise QuantDataError("通达信未返回基准股票日 K，无法确定 RPS 日期")
+        date_str = str(frame.iloc[-1].get("datetime") or "")[:10]
+        try:
+            date.fromisoformat(date_str)
+        except ValueError as error:
+            raise QuantDataError("通达信基准股票日 K 日期无效") from error
+        _cache_put(key, date_str)
+        return date_str
 
 
 def _exact_qfq_closes(
@@ -646,29 +665,12 @@ def _rps_history(stock: dict, target_date: str | None = None) -> dict | None:
     code = stock["code"]
     try:
         required_bars = 250 + _RPS_HISTORY_DAYS
-        cached_bars = bars_cache.get_daily_bars(code, min_bars=required_bars, target_date=target_date)
-        bars_records: list[dict]
-        latest_date: str
-        if cached_bars is not None and len(cached_bars) >= 251:
-            bars_records = cached_bars
-            latest_date = str(bars_records[-1].get("datetime") or bars_records[-1].get("date") or "")[:10]
-            raw_closes = [_finite(b.get("close")) for b in bars_records]
-            trade_dates = [str(b.get("datetime") or b.get("date") or "")[:10] for b in bars_records]
-        else:
-            frame = _thread_client().bars(
-                symbol=code,
-                frequency=4,
-                offset=required_bars,
-            )
-            if frame is None or frame.empty or len(frame) < 251:
-                return None
-            raw_closes = [_finite(value) for value in frame["close"].tolist()]
-            trade_dates = [str(value or "")[:10] for value in frame["datetime"].tolist()]
-            latest_date = str(frame.iloc[-1].get("datetime") or "")[:10]
-            bars_records = frame.to_dict("records")
-            for r in bars_records:
-                if "volume" not in r and "vol" in r:
-                    r["volume"] = r["vol"]
+        bars_records = _daily_bar_records(code, required_bars, target_date=target_date)
+        if len(bars_records) < 251:
+            return None
+        latest_date = str(bars_records[-1].get("datetime") or bars_records[-1].get("date") or "")[:10]
+        raw_closes = [_finite(b.get("close")) for b in bars_records]
+        trade_dates = [str(b.get("datetime") or b.get("date") or "")[:10] for b in bars_records]
 
         if any(value is None or value <= 0 for value in raw_closes):
             return None
@@ -729,6 +731,12 @@ def _percentile_ranks(items: list[dict], period: int) -> dict[str, float]:
 
 
 def rps_snapshot() -> dict:
+    """合并后台预热与筛选的快照请求，最多运行一份全市场构建。"""
+    with _RPS_SNAPSHOT_LOCK:
+        return _build_rps_snapshot()
+
+
+def _build_rps_snapshot() -> dict:
     """构建/读取当日 RPS20/50/120/250 全市场快照。
 
     先统一选取至少 251 根日 K 的沪深 A 股作为上市一年以上共同样本，再让所有
@@ -760,20 +768,12 @@ def rps_snapshot() -> dict:
         for future in as_completed(futures):
             item = future.result()
             if item:
+                # _daily_bar_records 已逐股保存下载结果，缓存时间应对应实际取数时刻。
+                # 不在全市场计算结束后再写一次数百 MB，并误延长盘中行情的有效期。
+                item.pop("bars", None)
                 histories.append(item)
     if len(histories) < 1000:
         raise QuantDataError(f"RPS 有效样本过少（{len(histories)}），通达信数据可能不完整")
-
-    # 反哺日 K 缓存：批量将全市场日 K 持久化到本地 SQLite 缓存，供后续选股零等待直接复用
-    try:
-        bars_items = [(item["code"], item["bars"]) for item in histories if item.get("bars")]
-        if bars_items:
-            bars_cache.put_daily_bars_batch(bars_items, target_date=trade_date)
-    except Exception:  # noqa: BLE001
-        pass
-    # 释放内存中的 bars 对象，保持内存轻量
-    for item in histories:
-        item.pop("bars", None)
 
     rank_maps = {
         period: _percentile_ranks(histories, period)
@@ -1120,36 +1120,134 @@ def _batch_quotes(codes: list[str]) -> dict[str, dict]:
     return quotes
 
 
-def _daily_bar_records(code: str, offset: int) -> list[dict]:
-    # 1. 优先查本地日 K 缓存
+_DAILY_BAR_TARGET_UNSET = object()
+_DAILY_BAR_LOCKS = tuple(threading.Lock() for _ in range(64))
+
+
+def _merge_daily_bar_records(*groups: list[dict]) -> list[dict]:
+    """按交易日合并日 K；后来的同日数据覆盖旧值，保留已有的更长历史。"""
+    by_date: dict[str, dict] = {}
+    for records in groups:
+        for raw in records:
+            moment = str(raw.get("datetime") or raw.get("date") or "")
+            day = moment[:10]
+            try:
+                date.fromisoformat(day)
+            except ValueError:
+                continue
+            prices = {field: _finite(raw.get(field)) for field in ("open", "close", "high", "low")}
+            volume = _finite(raw.get("volume", raw.get("vol")))
+            if any(value is None or value <= 0 for value in prices.values()) or volume is None or volume < 0:
+                continue
+            record = dict(raw)
+            record.update(prices)
+            record["volume"] = volume
+            if "vol" in record:
+                record["vol"] = volume
+            by_date[day] = record
+    return [by_date[day] for day in sorted(by_date)]
+
+
+def _daily_bar_page(code: str, start: int, count: int) -> tuple[list[dict], bool]:
+    """下载不超过 800 根；只有有效的非空短页才确认已到上市首日。"""
     try:
-        target_date = _latest_tdx_date()
-    except Exception:  # noqa: BLE001
-        target_date = None
-    cached = bars_cache.get_daily_bars(code, min_bars=offset, target_date=target_date)
+        frame = _thread_client().bars(symbol=code, frequency=4, start=start, offset=count)
+    except Exception:  # noqa: BLE001 — 线程连接失效时重建一次
+        _reset_thread_client()
+        frame = _thread_client().bars(symbol=code, frequency=4, start=start, offset=count)
+    if frame is None or frame.empty:
+        return [], False
+    raw_records = frame.to_dict("records")
+    records = _merge_daily_bar_records(raw_records)
+    complete = 0 < len(raw_records) < count and len(records) == len(raw_records)
+    return records, complete
+
+
+def _download_daily_bar_records(
+    code: str, required_bars: int, *, initial_records: list[dict] | None = None,
+) -> tuple[list[dict], bool]:
+    """有限分页补足请求历史，避免 mootdx 把超过 800 根的请求静默截断。"""
+    records = list(initial_records or [])
+    page_size = 800
+    page_count = min(astock._KLINE_MAX_PAGES, math.ceil(max(0, required_bars - len(records)) / page_size))
+    for _ in range(page_count):
+        start = len(records)
+        count = min(page_size, required_bars - len(records))
+        page_records, complete = _daily_bar_page(code, start, count)
+        if not page_records:
+            break
+        before = len(records)
+        # 页按最新到最旧抓取，最新页的数据在重叠时优先。
+        records = _merge_daily_bar_records(page_records, records)
+        if complete:
+            return records, True
+        if len(records) >= required_bars or len(records) == before:
+            break
+    return records, False
+
+
+def _daily_bar_records(
+    code: str,
+    offset: int,
+    *,
+    target_date: str | None | object = _DAILY_BAR_TARGET_UNSET,
+) -> list[dict]:
+    # 未传目标日的旧调用点自行探测；任务显式传 None 表示探测失败，不再逐股重试。
+    if target_date is _DAILY_BAR_TARGET_UNSET:
+        try:
+            target_date = _latest_tdx_date()
+        except Exception:  # noqa: BLE001
+            target_date = None
+    checked_date = target_date if isinstance(target_date, str) else None
+    cached = bars_cache.get_daily_bars(code, min_bars=offset, target_date=checked_date)
     if cached is not None:
         return cached
 
-    # 2. 缓存未命中，从通达信拉取并持久化
-    # 单次拉取 max(offset, 800) 根，保证一次网络请求即可充满完整历史
-    fetch_offset = max(offset, 800)
-    try:
-        frame = _thread_client().bars(symbol=code, frequency=4, offset=fetch_offset)
-    except Exception:  # noqa: BLE001 — 线程连接失效时重建一次
-        _reset_thread_client()
-        frame = _thread_client().bars(symbol=code, frequency=4, offset=fetch_offset)
-    if frame is None or frame.empty:
-        return []
+    # 同一股票的预热/选股共用下载结果；命中缓存的请求无需等待此锁。
+    with _DAILY_BAR_LOCKS[hash(code) % len(_DAILY_BAR_LOCKS)]:
+        return _load_daily_bar_records(code, offset, checked_date)
 
-    records = frame.to_dict("records")
-    for r in records:
-        if "volume" not in r and "vol" in r:
-            r["volume"] = r["vol"]
 
-    try:
-        bars_cache.put_daily_bars(code, records, target_date=target_date)
-    except Exception:  # noqa: BLE001
-        pass
+def _load_daily_bar_records(code: str, offset: int, target_date: str | None) -> list[dict]:
+    cached = bars_cache.get_daily_bars(code, min_bars=offset, target_date=target_date)
+    if cached is not None:
+        return cached
+    required_bars = max(offset, 800)
+    stale = bars_cache.get_stale_daily_bars(code)
+    records: list[dict] = []
+    history_complete = False
+    if stale:
+        recent, recent_complete = _daily_bar_page(code, 0, 64)
+        old_dates = {str(bar.get("datetime") or bar.get("date") or "")[:10] for bar in stale}
+        recent_dates = {str(bar.get("datetime") or bar.get("date") or "")[:10] for bar in recent}
+        if old_dates & recent_dates:
+            merged = _merge_daily_bar_records(stale, recent)
+            history_complete = recent_complete or bars_cache.is_daily_history_complete(code)
+            if len(merged) >= required_bars or history_complete:
+                records = merged
+            else:
+                # 已连续保留的旧 800 根无需再次下载，只补缺少的更早交易日。
+                records, history_complete = _download_daily_bar_records(
+                    code, required_bars, initial_records=merged,
+                )
+
+    if not records:
+        downloaded, history_complete = _download_daily_bar_records(code, required_bars)
+        # 只有日期重叠才能保留旧历史，防止久未刷新的缓存与新页之间留下缺口。
+        old_dates = {str(bar.get("datetime") or bar.get("date") or "")[:10] for bar in stale or []}
+        downloaded_dates = {str(bar.get("datetime") or bar.get("date") or "")[:10] for bar in downloaded}
+        records = (
+            _merge_daily_bar_records(stale or [], downloaded)
+            if old_dates & downloaded_dates else downloaded
+        )
+
+    if records:
+        try:
+            bars_cache.put_daily_bars(
+                code, records, target_date=target_date, history_complete=history_complete,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     return records
 
@@ -1253,7 +1351,7 @@ def _run_screen_named_signals(
     workers = max(2, min(12, int(os.environ.get("VR_SCREEN_WORKERS", "8"))))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_daily_bar_records, row["code"], kline_days): (row, rps)
+            executor.submit(_daily_bar_records, row["code"], kline_days, target_date=target_date): (row, rps)
             for row, rps in prepared
         }
         for future in as_completed(futures):
@@ -1762,7 +1860,8 @@ def _run_screen_tdx(
     目前分四阶段推送：
       - "basepool"：基金/北向基础池构建
       - "rps"     ：全市场 RPS 快照（仅当公式使用 RPS 函数）
-      - "bars"    ：基础池逐股日 K 下载（最大头）
+      - "bars"    ：读取本地日 K，仅补下载缺失/过期数据
+      - "evaluate"：逐股执行公式（不再计入下载进度）
       - "finance" ：财务增长率二次校验（仅当公式使用 FINANCE 时）
     """
     def _emit(phase: str, done: int, total: int, message: str = "") -> None:
@@ -1867,17 +1966,25 @@ def _run_screen_tdx(
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_daily_bar_records, row["code"], fetch_history): (row, rps)
+            executor.submit(_daily_bar_records, row["code"], fetch_history, target_date=target_date): (row, rps)
             for row, rps in prepared
         }
+        loaded: list[tuple[dict, dict | None, list[dict], Exception | None]] = []
         for future in as_completed(futures):
             row, rps = futures[future]
             done_bars += 1
-            # 每完成一只都推一次，便于前端细粒度更新；前端自己节流到 ~100ms。
-            if done_bars == total_bars or done_bars % max(1, total_bars // 50) == 0:
-                _emit("bars", done_bars, total_bars, f"日 K {done_bars}/{total_bars}")
             try:
-                bars = future.result()
+                loaded.append((row, rps, future.result(), None))
+            except Exception as error:  # noqa: BLE001 — 留到评估阶段统一记录失败
+                loaded.append((row, rps, [], error))
+            if done_bars == total_bars or done_bars % max(1, total_bars // 50) == 0:
+                _emit("bars", done_bars, total_bars, f"日 K 已就绪 {done_bars}/{total_bars}（本地复用 {cache_hits} 只）")
+
+        _emit("evaluate", 0, total_bars, "日 K 准备完成，正在计算选股公式…")
+        for done_evaluate, (row, rps, bars, load_error) in enumerate(loaded, 1):
+            try:
+                if load_error is not None:
+                    raise load_error
                 if as_of_date:
                     eval_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] <= as_of_date]
                     future_bars = [b for b in bars if str(b.get("datetime") or b.get("date") or "")[:10] > as_of_date]
@@ -1951,6 +2058,8 @@ def _run_screen_tdx(
                 if runtime_error_sample is None:
                     runtime_error_sample = str(error)
             base_rows.append(row)
+            if done_evaluate == total_bars or done_evaluate % max(1, total_bars // 50) == 0:
+                _emit("evaluate", done_evaluate, total_bars, f"公式已评估 {done_evaluate}/{total_bars}")
 
     if financial_candidates:
         total_finance = len(financial_candidates)

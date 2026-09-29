@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="vr-test-data-")
 os.environ["VR_DATA_DIR"] = _TEST_DATA_DIR
 os.environ["VR_REPORTS_DIR"] = os.path.join(_TEST_DATA_DIR, "myreports")
+os.environ["VR_BARS_CACHE_DIR"] = os.path.join(_TEST_DATA_DIR, "daily-bars")
+os.environ["VR_RPS_PREWARM"] = "0"
 
 
 def pytest_configure(config):

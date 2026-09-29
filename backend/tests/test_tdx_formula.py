@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import pytest
@@ -296,6 +297,66 @@ def test_dynamic_llvbars_window_excludes_the_high_bar():
     # 高点距今3根；LLVBARS(L,3)只看高点之后的[5,4,3]，不能把高点K线的1算进去。
     assert result["matched"] is True
     assert result["variables"] == {"高距": 3, "低距": 0}
+
+
+@pytest.mark.parametrize("function", ["HHVBARS", "LLVBARS"])
+@pytest.mark.parametrize(
+    ("values", "periods"),
+    [
+        (
+            [None, None, 5, 5, -2, -2, 9, float("nan"), None, 9, -2, None],
+            [1, 2, 0, 3, 1, 0, 4, 1, 2, 800, 2, 0],
+        ),
+        (
+            [1e308, -1e308, 5, 5, 8, 1, 1, 12, 3, -1e308, 12, None],
+            [0, 1, 1, 2, 0, 2, 6, 1, 800, 2, 0, 1],
+        ),
+        (
+            [
+                None if index % 17 == 0 else float("nan") if index % 31 == 0
+                else float((index * 7) % 23 - 11)
+                for index in range(800)
+            ],
+            [(0, 1, 3, 19, 50, 250, 800)[index % 7] for index in range(800)],
+        ),
+    ],
+    ids=["missing-and-ties", "reexpanding-and-large-values", "full-history"],
+)
+def test_dynamic_extreme_bars_match_window_oracle(function: str, values: list, periods: list[int]):
+    """Every dynamic window must obey the same range and tie rules as a scan."""
+    expected = []
+    for index, period in enumerate(periods):
+        start = 0 if period == 0 else max(0, index - period + 1)
+        candidates = [
+            (float(value), position)
+            for position, value in enumerate(values[start:index + 1], start=start)
+            if value is not None and math.isfinite(float(value))
+        ]
+        if not candidates:
+            expected.append(None)
+            continue
+        extreme = (max if function == "HHVBARS" else min)(value for value, _ in candidates)
+        latest_position = max(position for value, position in candidates if value == extreme)
+        expected.append(index - latest_position)
+
+    program = tdx_formula.compile_formula(
+        f"极值距离:{function}(EXTDATA_USER(1,0),EXTDATA_USER(2,0));",
+    )
+    result = program.evaluate_chart(
+        _trend_bars(len(values)),
+        context={"external_data": {1: values, 2: periods}},
+    )
+
+    assert result["outputs"][0]["series"] == expected
+
+
+@pytest.mark.parametrize("function", ["HHVBARS", "LLVBARS"])
+def test_dynamic_extreme_bars_keep_period_validation(function: str):
+    program = tdx_formula.compile_formula(f"{function}(C,EXTDATA_USER(1,0));")
+    with pytest.raises(tdx_formula.TdxFormulaEvaluationError) as exc_info:
+        program.evaluate(_trend_bars(4), context={"external_data": {1: [1, 2, -1, 4]}})
+
+    assert exc_info.value.issues[0]["code"] == "period_out_of_range"
 
 
 def test_count_zero_uses_all_history_and_barssincen_has_distinct_no_match():

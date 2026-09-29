@@ -10,6 +10,11 @@ import quant
 import quant_formula
 
 
+@pytest.fixture(autouse=True)
+def offline_trade_date(monkeypatch):
+    monkeypatch.setattr(quant, "_latest_tdx_date", lambda: "2026-09-18")
+
+
 def _near_high_bars(count: int = 250, latest_close: float = 96.0) -> list[dict]:
     return [
         {
@@ -105,7 +110,7 @@ def test_formula_parser_rejects_unsafe_or_unknown_syntax(expression: str):
 
 def test_formula_parameter_and_expression_change_actual_matches(monkeypatch):
     monkeypatch.setattr(quant, "base_pool", lambda *args, **kwargs: _base_pool_one())
-    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset: _near_high_bars(offset))
+    monkeypatch.setattr(quant, "_daily_bar_records", lambda code, offset, **kwargs: _near_high_bars(offset))
 
     default_result = quant.run_screen(strategy="near_high")
     strict_result = quant.run_screen(
@@ -199,4 +204,3 @@ def test_screen_api_accepts_and_forwards_formula(monkeypatch):
 
     assert response.status_code == 200
     assert received["formula"] == formula
-

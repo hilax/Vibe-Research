@@ -84,17 +84,17 @@ const PHASE_LABEL: Record<string, string> = {
   validate: "校验通达信公式",
   basepool: "构建基础池",
   rps:      "构建全市场 RPS",
-  bars:     "下载日 K",
+  bars:     "准备日 K",
   finance:  "核对财务增长率",
   evaluate: "评估公式",
 };
 const PHASE_WEIGHT: Record<string, number> = {
-  validate: 0.5, basepool: 1, rps: 2, bars: 8, finance: 1, evaluate: 0.5,
+  validate: 0.5, basepool: 1, rps: 2, bars: 3, finance: 1, evaluate: 5.5,
 };
-const PHASE_ORDER = ["validate", "basepool", "rps", "bars", "finance", "evaluate"] as const;
+const PHASE_ORDER = ["validate", "basepool", "rps", "bars", "evaluate", "finance"] as const;
 const TOTAL_WEIGHT = PHASE_ORDER.reduce((s, k) => s + (PHASE_WEIGHT[k] ?? 0), 0);
 
-/** 把分阶段进度折算成一个 0~100 的百分比。bars 是最大头，所以权重最大。 */
+/** 把数据准备、公式计算等阶段折算成一个 0~100 的百分比。 */
 function aggregateProgress(phase: string | null, done: number, total: number): number {
   if (!phase) return 0;
   let acc = 0;
