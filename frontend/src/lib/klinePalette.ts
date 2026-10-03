@@ -54,7 +54,7 @@ export const KLINE_SIGNAL_GLYPHS = {
   jsz:   "★",  // 金手指（图标11）
   sxhcg: "▲",  // 顺向火车轨（图标13）
   zcdx:  "◆",  // 蓝钻（图标24）
-  yxfz:  "☺",  // 月线反转（图标34）
+  yxfz:  "☺",  // 月线反转 6.5（图标34）
   xhr:   "▼",  // 小黄人（图标15）
 };
 export const KLINE_SIGNAL_COLORS = {
@@ -68,7 +68,7 @@ export const KLINE_SIGNAL_LABEL = {
   jsz:   "金手指",
   sxhcg: "顺向火车轨",
   zcdx:  "蓝钻左侧低吸",
-  yxfz:  "月线反转",
+  yxfz:  "月线反转 6.5",
   xhr:   "小黄人",
 };
 
@@ -100,7 +100,7 @@ export function tdxDrawIconSymbol(icon: number): string {
 }
 
 export function tdxDrawIconLabel(icon: number): string {
-  return ({ 11: "金手指", 13: "顺向火车轨", 24: "蓝钻左侧低吸", 34: "月线反转" } as Record<number, string>)[icon]
+  return ({ 11: "金手指", 13: "顺向火车轨", 24: "蓝钻左侧低吸", 34: "月线反转 6.5" } as Record<number, string>)[icon]
     || `通达信图标 ${icon}`;
 }
 

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
 import quant
 import quant_formula
+import tdx_formula
+import tdx_presets
 
 
 @pytest.fixture(autouse=True)
@@ -40,6 +44,20 @@ def _trend_bars(count: int = 320) -> list[dict]:
             "close": close,
         })
     return rows
+
+
+def _monthly_bars(closes: list[float], lows: list[float] | None = None) -> list[dict]:
+    start = date(2025, 1, 1)
+    return [
+        {
+            "datetime": (start + timedelta(days=index)).isoformat() + " 15:00",
+            "open": close,
+            "close": close,
+            "high": close * 1.005,
+            "low": lows[index] if lows is not None else close * 0.995,
+        }
+        for index, close in enumerate(closes)
+    ]
 
 
 def _base_pool_one() -> dict:
@@ -138,9 +156,95 @@ def test_monthly_formula_expression_is_used_by_evaluator():
     )
     changed = quant.monthly_reversal_62(_trend_bars(), rps, impossible_config)
 
-    assert default is not None and default["matched"] is True
+    assert default is not None and default["signal_results"]["YXFZ"] is True
+    assert default["matched"] is False  # 连续满足 FYX，当前不是 15 日窗口内首次。
     assert changed is not None and changed["matched"] is False
     assert "FYX1" in changed["signal_results"]
+
+
+def test_monthly_65_defaults_keep_legacy_strategy_and_add_event_history():
+    config = quant_formula.normalize_formula("monthly_reversal_62")
+    assert config["params"]["platform_ratio_2"] == 1.55
+    assert config["params"]["platform_ratio_3"] == 1.65
+    assert config["params"]["trend_short_lookback_days"] == 10
+    assert config["params"]["trend_lookback_days"] == 15
+    assert config["params"]["first_event_window"] == 15
+    assert quant_formula.required_history("monthly_reversal_62", config) == 308
+    assert "BARSSINCEN" in quant_formula.effective_formula("monthly_reversal_62", config)
+    preset = next(p for p in quant_formula.strategy_presets() if p["strategy"] == "monthly_reversal_62")
+    assert preset["label"] == "月线反转 6.5"
+
+
+def test_monthly_65_simplifies_fyx23_and_accepts_two_days_above_ma200():
+    bars = _monthly_bars([100.0] * 318 + [110.0, 110.0], [99.0] * 320)
+    bars[-35]["low"] = 70.0
+    result = quant.monthly_reversal_62(bars, {"rps50": 99, "rps120": 99})
+    assert result is not None
+    signals = result["signal_results"]
+    assert signals["FYX23"] is True  # 最近 10/20 日最低点相等仍可满足。
+    assert signals["FYX51"] is True  # AA200 恰好为 2。
+    assert signals["FYX52"] is False
+    assert signals["FYX53"] is False
+
+
+def test_monthly_65_ma250_branch_and_bullish_ma_pair():
+    closes = [200.0] * 75 + [100.0] * 200 + [120.0] * 45
+    lows = [198.0] * 75 + [98.0] * 200 + [110.0] * 44 + [105.0]
+    result = quant.monthly_reversal_62(_monthly_bars(closes, lows), {"rps50": 99, "rps120": 99})
+    assert result is not None
+    signals = result["signal_results"]
+    assert signals["FYX51"] is False  # AA200=45。
+    assert signals["FYX52"] is False  # 45 日最低价均高于 MA200。
+    assert signals["FYX53"] is True
+    assert signals["FYX5"] is True
+    assert signals["FYX603"] is True  # MA120>MA200，而 MA200<MA250。
+
+
+def test_monthly_65_uses_either_ten_or_fifteen_day_ma_trend():
+    bars = _monthly_bars([100.0] * 305 + [50.0] * 5 + [110.0] * 10)
+    result = quant.monthly_reversal_62(bars, {"rps50": 99, "rps120": 99})
+    assert result is not None
+    signals = result["signal_results"]
+    assert signals["FYX6011"] is True
+    assert signals["FYX6012"] is False
+    assert signals["FYX601"] is True
+    assert signals["FYX6021"] is True
+    assert signals["FYX6022"] is False
+    assert signals["FYX602"] is True
+
+
+@pytest.mark.parametrize("earlier_event_offset,expected", [(None, True), (2, False), (15, False), (16, True)])
+def test_monthly_named_config_filters_first_event_using_historical_rps(earlier_event_offset, expected):
+    bars = _monthly_bars([100.0] * 320)
+    events = {len(bars) - 1}
+    if earlier_event_offset is not None:
+        events.add(len(bars) - earlier_event_offset)
+    rps = {
+        "rps50": 99,
+        "rps120": 99,
+        "history": [
+            {"trade_date": bar["datetime"][:10], "rps50": 99 if index in events else 10, "rps120": 10}
+            for index, bar in enumerate(bars)
+        ],
+    }
+    config = quant_formula.normalize_formula("monthly_reversal_62", {"technical_expression": "FYX11"})
+    result = quant.monthly_reversal_62(bars, rps, config)
+    assert result is not None
+    assert result["signal_results"]["YXFZ"] is True
+    assert result["matched"] is expected
+    assert result["signal_results"]["YXFZXG"] is expected
+
+
+def test_monthly_named_defaults_match_source_preset_65():
+    bars = _monthly_bars([200.0] * 75 + [100.0] * 200 + [120.0] * 45)
+    rps = {"rps50": 99, "rps120": 99}
+    named = quant.monthly_reversal_62(bars, rps)
+    source = tdx_formula.compile_formula(tdx_presets.get_preset("monthly_reversal_62")["default_source"])
+    direct = source.evaluate(bars, rps=rps)
+    assert named is not None
+    assert named["matched"] is direct["matched"]
+    for signal in quant_formula.allowed_signals("monthly_reversal_62"):
+        assert named["signal_results"][signal] is bool(direct["variables"][signal])
 
 
 def test_formula_presets_and_validate_api():

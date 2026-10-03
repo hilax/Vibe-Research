@@ -12,7 +12,10 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
+
+import tdx_formula
 
 
 class FormulaValidationError(ValueError):
@@ -53,8 +56,8 @@ _PRESETS: dict[str, dict] = {
         "fundamental_signals": [],
     },
     "monthly_reversal_62": {
-        "label": "月线反转 6.2",
-        "description": "开放 RPS、新高、均线、平台宽度和接近高点参数；可重新组合 FYX 子条件。",
+        "label": "月线反转 6.5",
+        "description": "开放 RPS、新高、均线、平台宽度和接近高点参数；FYX 组合按观察窗口内首次成立筛选。",
         "params": [
             _p("rps50_min", "FYX11 · RPS50 大于", 87, group="RPS", minimum=0, maximum=100, step=0.5),
             _p("rps120_min", "FYX12 · RPS120 大于", 90, group="RPS", minimum=0, maximum=100, step=0.5),
@@ -70,23 +73,27 @@ _PRESETS: dict[str, dict] = {
             _p("ma_ratio_min", "中期/长期均线下限", 0.9, group="均线", minimum=0.5, maximum=1.5, step=0.01),
             _p("ma_above_window", "统计站上长期均线窗口", 45, group="均线", kind="integer", minimum=5, maximum=200, step=1, suffix="日"),
             _p("ma_above_min_days", "至少站上长期均线", 2, group="均线", kind="integer", minimum=0, maximum=199, step=1, suffix="日"),
-            _p("trend_lookback_days", "均线趋势回看", 15, group="平台", kind="integer", minimum=1, maximum=120, step=1, suffix="日"),
+            _p("trend_short_lookback_days", "均线短期趋势回看", 10, group="平台", kind="integer", minimum=1, maximum=120, step=1, suffix="日"),
+            _p("trend_lookback_days", "均线长期趋势回看", 15, group="平台", kind="integer", minimum=1, maximum=120, step=1, suffix="日"),
             _p("platform_high_days", "平台最高价周期", 30, group="平台", kind="integer", minimum=5, maximum=200, step=5, suffix="日"),
             _p("platform_low_days", "平台最低价周期", 120, group="平台", kind="integer", minimum=20, maximum=500, step=5, suffix="日"),
             _p("platform_ratio_1", "平台宽度条件1", 1.5, group="平台", minimum=1, maximum=5, step=0.05),
-            _p("platform_ratio_2", "平台宽度条件2", 1.6, group="平台", minimum=1, maximum=5, step=0.05),
-            _p("platform_ratio_3", "平台宽度条件3", 1.75, group="平台", minimum=1, maximum=5, step=0.05),
+            _p("platform_ratio_2", "平台宽度条件2", 1.55, group="平台", minimum=1, maximum=5, step=0.05),
+            _p("platform_ratio_3", "平台宽度条件3", 1.65, group="平台", minimum=1, maximum=5, step=0.05),
             _p("near_high_short_days", "近期最高价周期", 5, group="价格位置", kind="integer", minimum=1, maximum=60, step=1, suffix="日"),
             _p("near_high_long_days", "长期最高价周期", 120, group="价格位置", kind="integer", minimum=20, maximum=500, step=5, suffix="日"),
             _p("near_high_ratio_1", "近期/长期高点条件1", 0.85, group="价格位置", minimum=0.1, maximum=1.2, step=0.01),
             _p("near_high_ratio_2", "近期/长期高点条件2", 0.8, group="价格位置", minimum=0.1, maximum=1.2, step=0.01),
             _p("close_near_high_days", "收盘接近高点周期", 10, group="价格位置", kind="integer", minimum=1, maximum=120, step=1, suffix="日"),
             _p("close_near_high_ratio", "收盘/高点下限", 0.9, group="价格位置", minimum=0.1, maximum=1.2, step=0.01),
+            _p("first_event_window", "首次成立观察窗口", 15, group="事件过滤", kind="integer", minimum=1, maximum=120, step=1, suffix="日"),
         ],
         "technical_expression": "FYX1 AND FYX2 AND FYX3 AND FYX4 AND FYX5 AND FYX6 AND FYX7",
         "technical_signals": [
             "FYX11", "FYX12", "FYX13", "FYX21", "FYX22", "FYX23",
-            "FYX31", "FYX32", "FYX51", "FYX52", "FYX61", "FYX62", "FYX63",
+            "FYX31", "FYX32", "FYX51", "FYX52", "FYX53",
+            "FYX6011", "FYX6012", "FYX601", "FYX6021", "FYX6022", "FYX602", "FYX603",
+            "FYX61", "FYX62", "FYX63",
             "FYX71", "FYX72", "FYX73", "FYX1", "FYX2", "FYX3", "FYX4",
             "FYX5", "FYX6", "FYX7",
         ],
@@ -348,9 +355,77 @@ def formula_hash(strategy: str, config: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
+def monthly_reversal_source(config: dict) -> str:
+    """将兼容的命名条件配置转换为安全解释器使用的月线反转 6.5 源码。"""
+    p = config["params"]
+    return f"""RPS50:=EXTDATA_USER(3,0)/10;
+RPS120:=EXTDATA_USER(1,0)/10;
+FYX11:=RPS50>{p['rps50_min']};
+FYX12:=RPS120>{p['rps120_min']};
+FYX130:=RPS50>={p['breakout_rps_min']} OR RPS120>={p['breakout_rps_min']};
+FYX131:=C>=HHV(C,{p['close_breakout_days']});
+FYX13:=FYX130 AND FYX131;
+FYX1:=FYX11 OR FYX12;
+FYX21:=LLV(L,50)>LLV(L,200) AND FYX13;
+FYX22:=LLV(L,30)>LLV(L,120) AND FYX13;
+FYX23:=LLV(L,20)>LLV(L,50);
+FYX2:=FYX21 OR FYX22 OR FYX23;
+NH80:=IF(H<HHV(H,{p['recent_high_days']}),0,1);
+FYX31:=COUNT(NH80,{p['recent_high_window']});
+FYX32:=(C>=HHV(C,{p['secondary_breakout_days']}) OR H>=HHV(H,{p['secondary_breakout_days']})) AND FYX130;
+FYX3:=FYX31 OR FYX32;
+MAS:=MA(C,{p['ma_short_days']});
+MAM:=MA(C,{p['ma_mid_days']});
+MAL:=MA(C,{p['ma_long_days']});
+MAVL:=MA(C,{p['ma_very_long_days']});
+FYX4:=C>MAS AND C>MAL AND MAM/MAL>{p['ma_ratio_min']};
+NN200:=IF(C>MAL,1,0);
+AA200:=COUNT(NN200,{p['ma_above_window']});
+NN250:=IF(C>MAVL,1,0);
+AA250:=COUNT(NN250,{p['ma_above_window']});
+FYX51:=AA200>={p['ma_above_min_days']} AND AA200<{p['ma_above_window']};
+LNN200:=IF(L<MAL,1,0);
+LAA200:=COUNT(LNN200,{p['ma_above_window']});
+FYX52:=LAA200>0 AND AA200>{p['ma_above_min_days']};
+LNN250:=IF(L<MAVL,1,0);
+LAA250:=COUNT(LNN250,{p['ma_above_window']});
+FYX53:=LAA250>0 AND AA250>{p['ma_above_min_days']};
+FYX5:=FYX51 OR FYX52 OR FYX53;
+FYX6011:=MAM>=REF(MAM,{p['trend_short_lookback_days']}) OR MAL>=REF(MAL,{p['trend_short_lookback_days']});
+FYX6012:=MAM>=REF(MAM,{p['trend_lookback_days']}) OR MAL>=REF(MAL,{p['trend_lookback_days']});
+FYX601:=FYX6011 OR FYX6012;
+FYX6021:=MAM>=REF(MAM,{p['trend_short_lookback_days']}) AND MAL>=REF(MAL,{p['trend_short_lookback_days']});
+FYX6022:=MAM>=REF(MAM,{p['trend_lookback_days']}) AND MAL>=REF(MAL,{p['trend_lookback_days']});
+FYX602:=FYX6021 OR FYX6022;
+FYX603:=MAM>MAL AND FYX601;
+FYX61:=HHV(H,{p['platform_high_days']})/LLV(L,{p['platform_low_days']})<{p['platform_ratio_1']} AND FYX601;
+FYX62:=HHV(H,{p['platform_high_days']})/LLV(L,{p['platform_low_days']})<{p['platform_ratio_2']} AND FYX602;
+FYX63:=HHV(H,{p['platform_high_days']})/LLV(L,{p['platform_low_days']})<{p['platform_ratio_3']} AND FYX603 AND FYX13;
+FYX6:=FYX61 OR FYX62 OR FYX63;
+FYX71:=HHV(H,{p['near_high_short_days']})/HHV(H,{p['near_high_long_days']})>{p['near_high_ratio_1']};
+FYX72:=HHV(H,{p['near_high_short_days']})/HHV(H,{p['near_high_long_days']})>{p['near_high_ratio_2']} AND FYX13;
+FYX73:=C/HHV(H,{p['close_near_high_days']})>{p['close_near_high_ratio']};
+FYX7:=(FYX71 OR FYX72) AND FYX73;
+YXFZ:=({config['technical_expression']});
+YXFZXG:BARSSINCEN(YXFZ,{p['first_event_window']})=0;
+"""
+
+
+@lru_cache(maxsize=64)
+def _compiled_monthly_reversal(source: str) -> tdx_formula.Program:
+    return tdx_formula.compile_formula(source)
+
+
+def monthly_reversal_program(config: dict) -> tdx_formula.Program:
+    return _compiled_monthly_reversal(monthly_reversal_source(config))
+
+
 def effective_formula(strategy: str, config: dict) -> str:
     params = ", ".join(f"{key}={value}" for key, value in config["params"].items())
-    text = f"PARAMS({params}); TECHNICAL:=({config['technical_expression']})"
+    expression = f"({config['technical_expression']})"
+    if strategy == "monthly_reversal_62":
+        expression = f"BARSSINCEN({expression},{config['params']['first_event_window']})=0"
+    text = f"PARAMS({params}); TECHNICAL:={expression}"
     if config.get("fundamental_expression"):
         text += f"; FUNDAMENTAL:=({config['fundamental_expression']})"
     return text + ";"
@@ -382,12 +457,7 @@ def required_history(strategy: str, config: dict) -> int:
     if strategy == "near_high":
         return int(p["lookback_days"])
     if strategy == "monthly_reversal_62":
-        base = max(
-            250, p["close_breakout_days"], p["recent_high_days"],
-            p["secondary_breakout_days"], p["ma_very_long_days"],
-            p["platform_low_days"], p["near_high_long_days"],
-        )
-        return min(800, int(base + p["trend_lookback_days"]))
+        return monthly_reversal_program(config).required_history
     return min(800, int(max(280, 250 + p["above_ma_window"], 20 + p["ma_trend_days"])))
 
 

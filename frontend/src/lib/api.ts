@@ -442,6 +442,7 @@ export type QuantStrategy =
 export interface TdxFormulaPreset {
   strategy: QuantStrategy; label: string; description: string; syntax_version: string;
   default_source: string; default_history_days: number; supported_functions: string[];
+  previous_default_hashes?: string[];
 }
 export interface TdxFormulaIssue {
   code?: string; message: string; line?: number | null; column?: number | null;

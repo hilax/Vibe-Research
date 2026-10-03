@@ -126,7 +126,9 @@ def test_user_tdx_formula_evaluators():
     monthly = quant.monthly_reversal_62(_trend_bars(), rps)
     assert monthly is not None
     assert isinstance(monthly["matched"], bool)
-    assert monthly["matched"] is True
+    assert monthly["signal_results"]["YXFZ"] is True
+    assert monthly["signal_results"]["YXFZXG"] is False
+    assert monthly["matched"] is False  # FYX 连续成立，当前不是 15 日内首次。
 
     growth = quant.growth_mrgc_sxhcg(_trend_bars(), rps, turnover_pct=3)
     assert growth is not None
@@ -199,4 +201,3 @@ def test_backtest_summary_and_forward_returns():
     assert summary["win_rate_5d"] == 100.0
     assert summary["avg_return_5d"] == 8.0
     assert summary["win_rate_20d"] == 100.0
-

@@ -1,4 +1,4 @@
-// 通达信主图公式的纯函数实现：复刻 5 套公式（金手指 / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.2 / 小黄人）。
+// 通达信主图公式的纯函数实现：复刻 5 套公式（金手指 / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.5 / 小黄人）。
 // 这里只放公式与滑动窗口工具；ECharts 渲染由 KlineCard / StockKline 各自持有。
 //
 // 与原通达信公式 1:1 对应：换手率 VOL/CAPITAL 在此项目里没有流通股本接口，宽松用 vol/1e6 近似，
@@ -69,7 +69,7 @@ export function barsSince(cond: boolean[], n: number, i: number): number {
 }
 
 // 通达信公式信号计算：逐日评估 5 套公式，返回每根 bar 上是否触发图标。
-// 公式逻辑来自用户给的源码（金手指 DMI/PDI / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.2 / 小黄人），
+// 公式逻辑来自用户给的源码（金手指 DMI/PDI / 顺向火车轨 3.0 / 蓝钻-左侧低吸 / 月线反转 6.5 / 小黄人），
 // 用纯函数实现，逻辑与通达信同源代码逐字对应。
 export interface TdxSignals {
   // 金手指信号：图标 11（DMI.PDI<7）
@@ -78,7 +78,7 @@ export interface TdxSignals {
   sxhcg: boolean[];
   // 蓝钻信号：图标 24（钻石）
   zcdx: boolean[];
-  // 月线反转信号：图标 34（黄笑脸）
+  // 月线反转 6.5 信号：图标 34（黄笑脸），15 日窗口内首次成立。
   yxfz: boolean[];
   // 小黄人信号：图标 15（黄色三角）
   xhr: boolean[];
@@ -238,6 +238,7 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
   const sxhcg: boolean[] = new Array(n).fill(false);
   const zcdx: boolean[] = new Array(n).fill(false);
   const yxfz: boolean[] = new Array(n).fill(false);
+  const yxfzCondition: boolean[] = new Array(n).fill(false);
   const xhr: boolean[] = new Array(n).fill(false);
   const jsz: boolean[] = new Array(n).fill(false);
 
@@ -320,8 +321,8 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       zcdx[i] = d01 && d02 && d0rps && d02c && d03 && d04 && d05;
     }
 
-    // ─────── 月线反转 6.2 ───────
-    // 与 backend/tdx_presets.py 的 MONTHLY_REVERSAL_62 保持逐项一致。
+    // ─────── 月线反转 6.5 ───────
+    // 与 backend/tdx_presets.py 的 MONTHLY_REVERSAL_65 保持逐项一致。
     // “月线反转”是公式名称，公式本身在日 K 上通过 RPS 与长周期均线触发。
     {
       const r50 = rps.rps50[i] ?? 0;
@@ -339,8 +340,7 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       const l20 = llv(lows, 20, i) ?? lows[i];
       const f21 = l50 > l200 && f13;
       const f22 = l30 > l120 && f13;
-      const l10 = llv(lows, 10, i) ?? lows[i];
-      const f23 = l20 > l50 && l10 > l20;
+      const f23 = l20 > l50;
       const f2 = f21 || f22 || f23;
       const f31 = countPast(new Array(n).fill(false).map((_, k) => highs[k] >= (hhv(highs, 80, k) ?? highs[k])), 10, i);
       const c50 = c >= (hhv(closes, 50, i) ?? c);
@@ -350,21 +350,32 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       const f4 = gt(c, ma20[i]) && gt(c, ma200[i]) && (ma120[i] ?? 0) / (ma200[i] || 1) > 0.9;
       const gt200 = closes.map((cc, k) => gt(cc, ma200[k]));
       const aa200 = countPast(gt200, 45, i);
-      const lt200 = lows.map((ll, k) => ll < (ma200[k] ?? Infinity));
+      const gt250 = closes.map((cc, k) => gt(cc, ma250[k]));
+      const aa250 = countPast(gt250, 45, i);
+      const lt200 = lows.map((ll, k) => ma200[k] != null && ll < ma200[k]!);
       const laa200 = countPast(lt200, 45, i);
-      const f51 = aa200 > 2 && aa200 < 45;
+      const lt250 = lows.map((ll, k) => ma250[k] != null && ll < ma250[k]!);
+      const laa250 = countPast(lt250, 45, i);
+      const f51 = aa200 >= 2 && aa200 < 45;
       const f52 = laa200 > 0 && aa200 > 2;
-      const f5 = f51 || f52;
+      const f53 = laa250 > 0 && aa250 > 2;
+      const f5 = f51 || f52 || f53;
 
-      const ma120Rise15 = i >= 15 && ma120[i] != null && ma120[i - 15] != null && ma120[i]! >= ma120[i - 15]!;
-      const ma200Rise15 = i >= 15 && ma200[i] != null && ma200[i - 15] != null && ma200[i]! >= ma200[i - 15]!;
-      const f601 = ma120Rise15 || ma200Rise15;
-      const f602 = ma120Rise15 && ma200Rise15;
-      const f603 = gt(ma120[i], ma200[i]) && gt(ma200[i], ma250[i]);
+      const ma120Rise10 = i >= 10 && ge(ma120[i], ma120[i - 10]);
+      const ma200Rise10 = i >= 10 && ge(ma200[i], ma200[i - 10]);
+      const ma120Rise15 = i >= 15 && ge(ma120[i], ma120[i - 15]);
+      const ma200Rise15 = i >= 15 && ge(ma200[i], ma200[i - 15]);
+      const f6011 = ma120Rise10 || ma200Rise10;
+      const f6012 = ma120Rise15 || ma200Rise15;
+      const f601 = f6011 || f6012;
+      const f6021 = ma120Rise10 && ma200Rise10;
+      const f6022 = ma120Rise15 && ma200Rise15;
+      const f602 = f6021 || f6022;
+      const f603 = gt(ma120[i], ma200[i]) && f601;
       const h30 = hhv(highs, 30, i) ?? highs[i];
       const f61 = l120 > 0 && h30 / l120 < 1.50 && f601;
-      const f62 = l120 > 0 && h30 / l120 < 1.60 && f602;
-      const f63 = l120 > 0 && h30 / l120 < 1.75 && f603 && f13;
+      const f62 = l120 > 0 && h30 / l120 < 1.55 && f602;
+      const f63 = l120 > 0 && h30 / l120 < 1.65 && f603 && f13;
       const f6 = f61 || f62 || f63;
       const h120 = hhv(highs, 120, i) ?? highs[i];
       const h5 = hhv(highs, 5, i) ?? highs[i];
@@ -373,9 +384,9 @@ export function computeSignals(bars: KlineBar[], rps: RpsInput): TdxSignals {
       const h10 = hhv(highs, 10, i) ?? highs[i];
       const f73 = h10 > 0 && c / h10 > 0.9;
       const f7 = (f71 || f72) && f73;
-      const yxfzNow = !!(f1 && f2 && f3 && f4 && f5 && f6 && f7);
-      // 原公式没有 BARSSINCEN 去重：条件连续成立时，通达信会在每根 K 线上画信号。
-      yxfz[i] = yxfzNow;
+      yxfzCondition[i] = !!(f1 && f2 && f3 && f4 && f5 && f6 && f7);
+      // 用原始 YXFZ 条件序列判断 BARSSINCEN，连续成立时不会每 15 日重复画信号。
+      yxfz[i] = barsSince(yxfzCondition, 15, i) === 0;
     }
 
     // ─────── 小黄人（板块 RPS 三线翻红）───────

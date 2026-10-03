@@ -20,6 +20,7 @@ import {
   type QuantRpsStatus,
 } from "@/lib/api";
 import { addCodes, loadWatch, saveWatch } from "@/lib/watchlist";
+import { initializeFormulaDrafts } from "@/lib/formulaDrafts";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -423,16 +424,11 @@ export function QuantScreening() {
     let active = true;
     setFormulaLoading(true);
     api.quantFormulas()
-      .then((items) => {
+      .then(async (items) => {
         if (!active) return;
         const saved = readFormulaDrafts();
-        const next: FormulaDrafts = { ...saved };
-        // 内置策略：草稿不存在时用默认公式初始化
-        items.forEach((preset) => {
-          if (!next[preset.strategy] || !next[preset.strategy].trim()) {
-            next[preset.strategy] = preset.default_source;
-          }
-        });
+        const next = await initializeFormulaDrafts(saved, items);
+        if (!active) return;
         setPresets(items);
         setDrafts(next);
       })

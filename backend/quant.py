@@ -49,7 +49,7 @@ _RPS_PERIODS = (5, 10, 15, 20, 50, 120, 250)
 _RPS_HISTORY_DAYS = 560
 _STRATEGIES = {
     "near_high": "接近一年新高",
-    "monthly_reversal_62": "月线反转 6.2",
+    "monthly_reversal_62": "月线反转 6.5",
     "growth_mrgc_sxhcg": "RPS 高成长（MRGC / SXHCG）",
     "blue_diamond_left_low": "蓝钻公式 · 左侧低吸",
     "daily_observe_3": "每日观察选股 3",
@@ -908,100 +908,30 @@ def _technical_series(bars: list[dict], minimum: int = 250) -> dict | None:
 def monthly_reversal_62(
     bars: list[dict], rps: dict, formula_config: dict | None = None,
 ) -> dict | None:
-    config = formula_config or quant_formula.normalize_formula("monthly_reversal_62")
-    p = config["params"]
-    minimum = max(
-        250, p["close_breakout_days"], p["recent_high_days"],
-        p["secondary_breakout_days"], p["ma_very_long_days"],
-        p["platform_low_days"], p["near_high_long_days"],
-    ) + p["trend_lookback_days"]
-    data = _technical_series(bars, minimum)
-    if not data:
+    """保留旧入口名称，用共享解释器执行 6.5 与首次事件过滤。"""
+    config = quant_formula.normalize_formula("monthly_reversal_62", formula_config)
+    program = quant_formula.monthly_reversal_program(config)
+    if len(bars) < program.required_history:
         return None
-    c, h, l = data["close"], data["high"], data["low"]
-    ma20 = _ma(c, p["ma_short_days"])
-    ma120 = _ma(c, p["ma_mid_days"])
-    ma200 = _ma(c, p["ma_long_days"])
-    ma250 = _ma(c, p["ma_very_long_days"])
-    i = len(c) - 1
-    rps50, rps120 = rps["rps50"], rps["rps120"]
-
-    fyx11 = rps50 > p["rps50_min"]
-    fyx12 = rps120 > p["rps120_min"]
-    fyx130 = rps50 >= p["breakout_rps_min"] or rps120 >= p["breakout_rps_min"]
-    fyx131 = c[i] >= _hhv(c, p["close_breakout_days"])
-    fyx13 = fyx130 and fyx131
-    fyx1 = fyx11 or fyx12
-
-    fyx21 = _llv(l, 50) > _llv(l, 200) and fyx13
-    fyx22 = _llv(l, 30) > _llv(l, 120) and fyx13
-    fyx23 = _llv(l, 20) > _llv(l, 50) and _llv(l, 10) > _llv(l, 20)
-    fyx2 = fyx21 or fyx22 or fyx23
-
-    nh80 = [h[j] >= _hhv(h, p["recent_high_days"], j) for j in range(len(h))]
-    fyx31 = _count_last(nh80, p["recent_high_window"]) > 0
-    fyx32 = (
-        c[i] >= _hhv(c, p["secondary_breakout_days"])
-        or h[i] >= _hhv(h, p["secondary_breakout_days"])
-    ) and fyx130
-    fyx3 = fyx31 or fyx32
-
-    fyx4 = (
-        c[i] > ma20[i]
-        and c[i] > ma200[i]
-        and ma120[i] / ma200[i] > p["ma_ratio_min"]
+    evaluation = program.evaluate(
+        _tdx_evaluation_bars(bars), rps=_tdx_rps_for_bars(rps, bars),
     )
-    above200 = [
-        value is not None and c[index] > value
-        for index, value in enumerate(ma200)
-    ]
-    low_below200 = [
-        value is not None and l[index] < value
-        for index, value in enumerate(ma200)
-    ]
-    aa200 = _count_last(above200, p["ma_above_window"])
-    laa200 = _count_last(low_below200, p["ma_above_window"])
-    fyx51 = p["ma_above_min_days"] < aa200 < p["ma_above_window"]
-    fyx52 = laa200 > 0 and aa200 > p["ma_above_min_days"]
-    fyx5 = fyx51 or fyx52
-
-    trend_ref = p["trend_lookback_days"]
-    fyx601 = ma120[i] >= ma120[i - trend_ref] or ma200[i] >= ma200[i - trend_ref]
-    fyx602 = ma120[i] >= ma120[i - trend_ref] and ma200[i] >= ma200[i - trend_ref]
-    fyx603 = ma120[i] > ma200[i] and ma200[i] > ma250[i]
-    ratio = _hhv(h, p["platform_high_days"]) / _llv(l, p["platform_low_days"])
-    fyx61 = ratio < p["platform_ratio_1"] and fyx601
-    fyx62 = ratio < p["platform_ratio_2"] and fyx602
-    fyx63 = ratio < p["platform_ratio_3"] and fyx603 and fyx13
-    fyx6 = fyx61 or fyx62 or fyx63
-
-    near_high_ratio = _hhv(h, p["near_high_short_days"]) / _hhv(h, p["near_high_long_days"])
-    fyx71 = near_high_ratio > p["near_high_ratio_1"]
-    fyx72 = near_high_ratio > p["near_high_ratio_2"] and fyx13
-    fyx73 = c[i] / _hhv(h, p["close_near_high_days"]) > p["close_near_high_ratio"]
-    fyx7 = (fyx71 or fyx72) and fyx73
-    signal_results = {
-        "FYX11": fyx11, "FYX12": fyx12, "FYX13": fyx13,
-        "FYX21": fyx21, "FYX22": fyx22, "FYX23": fyx23,
-        "FYX31": fyx31, "FYX32": fyx32, "FYX51": fyx51, "FYX52": fyx52,
-        "FYX61": fyx61, "FYX62": fyx62, "FYX63": fyx63,
-        "FYX71": fyx71, "FYX72": fyx72, "FYX73": fyx73,
-        "FYX1": fyx1, "FYX2": fyx2, "FYX3": fyx3, "FYX4": fyx4,
-        "FYX5": fyx5, "FYX6": fyx6, "FYX7": fyx7,
-    }
-    matched = quant_formula.evaluate_expression(
-        config["technical_expression"],
-        quant_formula.allowed_signals("monthly_reversal_62"),
-        signal_results,
-    )
-    signals = [fyx1, fyx2, fyx3, fyx4, fyx5, fyx6, fyx7]
+    variables = evaluation["variables"]
+    signal_names = quant_formula.allowed_signals("monthly_reversal_62")
+    signal_results = {name: bool(variables.get(name)) for name in signal_names}
+    signal_results.update({
+        "YXFZ": bool(variables.get("YXFZ")),
+        "YXFZXG": bool(variables.get("YXFZXG")),
+    })
+    c, h = _series(bars, "close"), _series(bars, "high")
+    signals = [signal_results[f"FYX{index}"] for index in range(1, 8)]
     return {
-        "matched": matched,
+        "matched": bool(evaluation["matched"]),
         "signal_results": signal_results,
         "strategy_detail": "FYX1–FYX7：" + " / ".join("✓" if value else "×" for value in signals),
-        "close": round(c[i], 3),
+        "close": round(c[-1], 3),
         "year_high": round(_hhv(h, 250), 3),
-        "distance_to_high_pct": round(max(0.0, (_hhv(h, 250) - c[i]) / _hhv(h, 250) * 100), 3),
+        "distance_to_high_pct": round(max(0.0, (_hhv(h, 250) - c[-1]) / _hhv(h, 250) * 100), 3),
     }
 
 
